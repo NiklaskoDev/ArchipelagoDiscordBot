@@ -220,3 +220,10 @@ def test_error_embed_is_plain_text_in_the_error_colour():
     embed = error_embed("It failed")
     assert embed.description == "It failed" and embed.colour == ERROR
     assert json.loads(json_text(embed))[0]["description"] == "It failed"
+
+
+def test_a_very_long_name_that_escaping_doubles_still_fits_a_title():
+    parsed = parse_game_detail(game_json(name="*" * 300))
+    title = game_detail_embeds(parsed, "en")[0].title
+    assert title == r"\*" * 99 + "…"  # cut before escaping: 199 characters, no dangling backslash
+    assert len(game_detail_embeds(parsed, "en")[0]) <= 6000

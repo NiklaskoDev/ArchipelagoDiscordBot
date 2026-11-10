@@ -5,7 +5,7 @@ import re
 from dataclasses import dataclass
 
 from apbot.manager.client import ManagerClient
-from apbot.manager.errors import ManagerUnavailable, TokenInvalid
+from apbot.manager.errors import ManagerError, ManagerUnavailable, TokenInvalid
 from apbot.services.game_cache import GameCache
 
 log = logging.getLogger(__name__)
@@ -46,6 +46,8 @@ def version_at_least(version: object, minimum: str) -> bool:
 async def check_manager(client: ManagerClient, bot_token: str) -> ManagerReport:
     """Asks the manager about itself and about the bot's token. Raises ManagerUnavailable when it cannot be reached."""
     health = await client.health()
+    if not isinstance(health, dict):
+        raise ManagerUnavailable(None, "The manager's health check did not answer as expected")
     try:
         status = await client.auth_status(bot_token)
     except TokenInvalid:
@@ -72,12 +74,15 @@ class ManagerWatch:
         self._cache = cache
 
     async def check_once(self) -> bool:
-        """True when the manager answered and the bot's account is fine; False when it could not be reached.
+        """True when the manager answered and the bot's account is fine; False when it could not be reached or answered
+        something unusable.
         Raises StartupFailure when the manager does not accept MANAGER_API_TOKEN."""
         try:
             report = await check_manager(self._client, self._token)
-        except ManagerUnavailable as exc:
-            log.error("The manager cannot be reached (%s). Trying again in %s s.", exc.detail, RETRY_INTERVAL)
+        except ManagerError as exc:
+            # Not only a dead connection: a wrong MANAGER_URL (404), a proxy in the way (403) or a busy manager (429)
+            # look different but are no reason to crash; the settings may be fixed or the manager may come back.
+            log.error("The manager cannot be used yet (%s). Trying again in %s s.", exc.detail, RETRY_INTERVAL)
             return False
         if not version_at_least(report.version, MIN_MANAGER_VERSION):
             log.warning(

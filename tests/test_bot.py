@@ -6,9 +6,10 @@ import discord
 import httpx
 import pytest
 from discord import app_commands
-from fakes import FakeInteraction
+from fakes import FakeInteraction, game_json, make_config
 
 import apbot.__main__ as entry
+from apbot.bot import ApBot
 from apbot.errors import UserFacingError, user_message
 from apbot.manager.errors import (
     Conflict,
@@ -200,3 +201,58 @@ async def test_manager_token_that_is_refused_after_a_retry_also_ends_with_exit_c
     assert no_discord.exit_code == 2
     assert "MANAGER_API_TOKEN is not accepted by the manager" in caplog.text
     await no_discord.close()
+
+
+# --- command sync and background tasks -----------------------------------------------------------------------------------
+def stub_sync(bot) -> list[dict]:
+    calls: list[dict] = []
+
+    async def sync(**kwargs):
+        calls.append(kwargs)
+        return []
+
+    bot.tree.sync = sync
+    return calls
+
+
+async def test_commands_are_synced_globally_by_default(no_discord, manager):
+    calls = stub_sync(no_discord)
+    manager.add("GET", "/api/health", HEALTH)
+    manager.add("GET", "/api/auth/status", {"user": {"id": 2, "username": "bot", "role": "user"}, "site_url": None})
+    await no_discord.setup_hook()
+    await no_discord.close()
+    assert calls == [{}]
+
+
+async def test_commands_go_to_the_development_server_only_when_one_is_set(tmp_path, manager):
+    bot = ApBot(make_config(tmp_path, dev_guild_id=424242), manager=manager.client)
+    calls = stub_sync(bot)
+    manager.add("GET", "/api/health", HEALTH)
+    manager.add("GET", "/api/auth/status", {"user": {"id": 2, "username": "bot", "role": "user"}, "site_url": None})
+    await bot.setup_hook()
+    await bot.close()
+    assert [call["guild"].id for call in calls] == [424242]
+    assert {c.name for c in bot.tree.get_commands(guild=discord.Object(424242))} == {"games", "game", "signups"}
+
+
+async def test_background_tasks_refresh_the_games_and_write_the_heartbeat_once_connected(tmp_path, manager, monkeypatch):
+    monkeypatch.setattr(ApBot, "is_ready", lambda self: True)
+    bot = ApBot(make_config(tmp_path), manager=manager.client)
+    stub_sync(bot)
+    manager.add("GET", "/api/health", HEALTH)
+    manager.add("GET", "/api/auth/status", {"user": {"id": 2, "username": "bot", "role": "user"}, "site_url": None})
+    manager.add("GET", "/api/games", [game_json(1, "Friday Run")])
+    await bot.setup_hook()
+    await let_tasks_run()
+    await bot.close()
+    assert [g.name for g in bot.cache.games] == ["Friday Run"]
+    assert (tmp_path / "heartbeat").exists()
+
+
+async def test_no_heartbeat_while_the_gateway_is_not_connected(no_discord, manager, tmp_path):
+    manager.add("GET", "/api/health", HEALTH)
+    manager.add("GET", "/api/auth/status", {"user": {"id": 2, "username": "bot", "role": "user"}, "site_url": None})
+    await no_discord.setup_hook()
+    await let_tasks_run()
+    await no_discord.close()
+    assert not (tmp_path / "heartbeat").exists()

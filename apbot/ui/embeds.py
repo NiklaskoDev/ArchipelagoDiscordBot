@@ -23,7 +23,7 @@ from apbot.ui.style import (
     STATE_COLOURS,
 )
 
-TITLE_LIMIT = 256
+TITLE_LIMIT = 100  # escaping can double a name, and Discord allows 256 characters in a title
 MORE_LINE_RESERVE = 100  # room for the "…and N more" line at the end of a list
 SLOTS_EMBED_RESERVE = 120  # field names and the footer of the slots embed, which len() counts too
 

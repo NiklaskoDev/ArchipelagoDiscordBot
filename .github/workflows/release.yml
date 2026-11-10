@@ -23,11 +23,44 @@ jobs:
   test:
     uses: ./.github/workflows/ci.yml
 
+  # Right after the tests and before anything is published: a tag that is malformed or does not match the version in
+  # apbot/__init__.py must not put an image on the registry.
+  validate:
+    name: Check the tag
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
+      prerelease: ${{ steps.tag.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate tag
+        id: tag
+        run: |
+          TAG="$GITHUB_REF_NAME"
+          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-pr[1-9][0-9]*)?$ ]]; then
+            echo "::error::Tag '$TAG' is not vMAJOR.MINOR.HOTFIX[-prN]"
+            exit 1
+          fi
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+          if [[ "$TAG" == *-pr* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check version file
+        env:
+          VERSION: ${{ steps.tag.outputs.version }}
+        run: test "$(python3 -c "import apbot; print(apbot.__version__)")" = "$VERSION"
+
   # One image per platform, built on a runner of that architecture and pushed by digest. The publish job puts them
   # together under the tags.
   image:
     name: Push image (${{ matrix.arch }})
-    needs: test
+    needs: validate
     strategy:
       fail-fast: false
       matrix:
@@ -140,7 +173,7 @@ jobs:
           docker buildx imagetools inspect "$image:$(jq -r '.tags[0] | split(":")[-1]' <<< "$DOCKER_METADATA_OUTPUT_JSON")"
 
   release:
-    needs: [test, publish]
+    needs: [validate, publish]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -148,29 +181,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Validate tag
-        id: tag
-        run: |
-          TAG="$GITHUB_REF_NAME"
-          if [[ ! "$TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-pr[1-9][0-9]*)?$ ]]; then
-            echo "::error::Tag '$TAG' is not vMAJOR.MINOR.HOTFIX[-prN]"
-            exit 1
-          fi
-          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
-          if [[ "$TAG" == *-pr* ]]; then
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Check version file
-        env:
-          VERSION: ${{ steps.tag.outputs.version }}
-        run: test "$(python3 -c "import apbot; print(apbot.__version__)")" = "$VERSION"
-
       - name: Extract release notes from CHANGELOG.md
         env:
-          VERSION: ${{ steps.tag.outputs.version }}
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
           touch notes.md
           if [ -f CHANGELOG.md ]; then
@@ -184,7 +197,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ github.ref_name }}
-          PRERELEASE: ${{ steps.tag.outputs.prerelease }}
+          PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
           ARGS=(--verify-tag --title "$TAG")
           if [ "$PRERELEASE" = "true" ]; then ARGS+=(--prerelease); fi
