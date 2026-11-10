@@ -1,0 +1,43 @@
+# Example for a plain Docker host: the Archipelago Manager and the Discord bot side by side.
+# Put the secrets in a git-ignored file named .env next to this one (see .env.example); never write them in here.
+services:
+  archipelago-manager:
+    image: ghcr.io/niklaskodev/archipelagomanagerdocker:latest
+    container_name: archipelago-manager
+    restart: unless-stopped
+    stop_grace_period: 30s        # lets running game servers save before they are stopped
+    ports:
+      - "8080:8080"               # web UI
+      - "38281-38300:38281-38300" # one port per hosted game; keep in sync with PORT_RANGE below
+    environment:
+      PUID: "1000"                # who owns the files in ./config (Unraid: 99 and 100)
+      PGID: "1000"
+      TZ: "Europe/Berlin"
+      PORT_RANGE: "38281-38300"
+      # What players type to reach this server: a domain name or the LAN/WAN address. Empty = the address used to open
+      # the web UI. The bot shows the same address in /game.
+      PUBLIC_HOST: ""
+    volumes:
+      - ./config:/config
+
+  ap-discord-bot:
+    image: ghcr.io/niklaskodev/archipelagodiscordbot:latest
+    # To build it yourself instead:
+    # build: .
+    container_name: ap-discord-bot
+    restart: unless-stopped
+    depends_on:
+      archipelago-manager:
+        condition: service_healthy
+    environment:
+      DISCORD_TOKEN: "${DISCORD_TOKEN:?Set DISCORD_TOKEN in .env}"
+      # A read-only API token of a plain user account of the manager (see the README).
+      MANAGER_API_TOKEN: "${MANAGER_API_TOKEN:?Set MANAGER_API_TOKEN in .env}"
+      # The manager's address as seen from this container: the service name above, on the internal Docker network.
+      MANAGER_URL: "http://archipelago-manager:8080"
+      PUID: "1000"                # who owns the files in ./bot-data (Unraid: 99 and 100)
+      PGID: "1000"
+      TZ: "Europe/Berlin"
+      # LOG_LEVEL: "INFO"
+    volumes:
+      - ./bot-data:/data
