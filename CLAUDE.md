@@ -5,11 +5,11 @@ Detail files live in `docs/ai/` — read one only when its trigger (§9) applies
 Guideline version: 1.3.0
 
 ## Project (fill in once, keep current)
-- Purpose: <one line>
-- Stack: <language, framework, database>
-- Commands: run `<cmd>` · test `<cmd>` · lint `<cmd>` · build `<cmd>`
-- Version source of truth: `<file>` (e.g. package.json, pyproject.toml)
-- Layout: <dir → responsibility, one line each>
+- Purpose: Discord bot for Archipelago multiworld games, using the Archipelago Manager's REST API; runs as a Docker container.
+- Stack: Python 3.12, discord.py, httpx, SQLite (stdlib sqlite3), cryptography (Fernet); pytest + ruff; Docker (amd64/arm64).
+- Commands: run `python -m apbot` · test `pytest` · lint `ruff check .` · build `docker build -t ap-discord-bot .`
+- Version source of truth: `apbot/__init__.py` (`__version__`)
+- Layout: apbot/cogs → slash commands (thin) · apbot/services → background work and logic · apbot/manager → manager API client + whitelisted views · apbot/db → SQLite + migrations · apbot/i18n → EN/DE/FR/NL catalogs · apbot/ui → embeds, views, style · docker/ → entrypoint · tests/ → pytest
 
 ## 1. Workflow: plan → approve → code → test → review
 | Phase | Model | Effort | Agent | Output |
