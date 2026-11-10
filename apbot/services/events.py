@@ -7,7 +7,7 @@ when the source is gone, past, or the server turned events off. Only what the bo
 import contextlib
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -79,10 +79,7 @@ class Events:
         for guild in self._client.guilds:
             settings = self._settings.get(guild.id)
             wanted = self._wanted(settings, signups) if settings.scheduled_events else {}
-            try:
-                await self._sync_guild(guild, wanted)
-            except discord.HTTPException as exc:
-                log.warning("Could not update the scheduled events of a server: %s", exc.text or exc.status)
+            await self._sync_guild(guild, wanted)
 
     def _wanted(self, settings: GuildSettings, signups: list[SignupSummary]) -> dict[tuple[str, int], WantedEvent]:
         lang = settings.language
@@ -110,16 +107,24 @@ class Events:
         return wanted
 
     async def _sync_guild(self, guild: Any, wanted: dict[tuple[str, int], WantedEvent]) -> None:
+        """One event that Discord refuses must not keep the others of the server from syncing."""
         rows = {(row.source, row.source_id): row for row in self._store.for_guild(guild.id)}
         for key, row in rows.items():
             if key not in wanted:
-                await self._delete(guild, row)
+                await self._attempt(key, self._delete(guild, row))
         for key, event in wanted.items():
             row = rows.get(key)
             if row is None:
-                await self._create(guild, key, event)
+                await self._attempt(key, self._create(guild, key, event))
             elif abs(row.starts_at - event.starts_at) > MOVED_BY:
-                await self._move(guild, key, row, event)
+                await self._attempt(key, self._move(guild, key, row, event))
+
+    @staticmethod
+    async def _attempt(key: tuple[str, int], action: Awaitable[None]) -> None:
+        try:
+            await action
+        except discord.HTTPException as exc:
+            log.warning("Could not update the scheduled event for %s %s: %s", key[0], key[1], exc.text or exc.status)
 
     async def _create(self, guild: Any, key: tuple[str, int], event: WantedEvent) -> None:
         created = await guild.create_scheduled_event(

@@ -22,7 +22,6 @@ CHOICE_NAME = 100
 
 LIST_LINES = 25  # games or rounds in one list before "…and N more"
 DISCORD_NAME_LIMIT = 100  # a thread, role or scheduled event name, and an event location
-DISCORD_NAME_LIMIT = 100  # a thread, role or scheduled event name, and an event location
 NAME_LIMIT = 60  # a game, world or player name in a line, before it is cut
 SEPARATOR = " — "
 ELLIPSIS = "…"

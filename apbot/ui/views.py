@@ -6,11 +6,17 @@ from collections.abc import Awaitable, Callable, Collection, Sequence
 import discord
 
 from apbot.i18n import t
+from apbot.manager.views import HintView
+from apbot.ui.dynamic import hint_status_view
 from apbot.ui.embeds import notice_embed
+from apbot.ui.format import clip
 from apbot.ui.respond import reply
+from apbot.ui.style import CHOICE_NAME, SELECT_OPTIONS, SEPARATOR
+from apbot.ui.tracker import hint_status_label, hints_for_me, line_for_me
 
 CONFIRM_TIMEOUT = 60  # seconds
 SELECT_TIMEOUT = 300
+HINT_PICKER_TIMEOUT = 600
 
 
 class OpenInManagerButton(discord.ui.Button):
@@ -77,9 +83,10 @@ class ConfirmView(AuthorView):
         self.stop()
 
     async def ask(self, interaction: discord.Interaction, embed: discord.Embed) -> bool:
-        """Sends `embed` with the buttons as the answer to `interaction` (which must not have been answered yet) and
-        waits. True when confirmed; False when cancelled or when nobody answered within a minute."""
-        await interaction.response.send_message(embed=embed, view=self, ephemeral=True)
+        """Sends `embed` with the buttons as the answer to `interaction` (or as the follow-up to it when it was deferred
+        while the manager was asked) and waits. True when confirmed; False when cancelled or when nobody answered
+        within a minute."""
+        await reply(interaction, embed=embed, view=self, ephemeral=True)
         await self.wait()
         if self.confirmed is None:
             with contextlib.suppress(discord.HTTPException):
@@ -121,3 +128,48 @@ class MultiSelectView(AuthorView):
         embed = await self._save(interaction, list(self.select.values))
         await interaction.response.edit_message(embed=embed, view=None)
         self.stop()
+
+
+class HintPickerView(AuthorView):
+    """A drop-down of the hints for items the person waits for. Choosing one replaces the message with buttons that mark
+    exactly that hint (they carry its numbers, so they work after a restart too)."""
+
+    def __init__(self, author_id: int, lang: str, game_id: int, slot: int, hints: Sequence[HintView]):
+        super().__init__(author_id, lang, timeout=HINT_PICKER_TIMEOUT)
+        self._game_id, self._slot = game_id, slot
+        self._hints = {self._key(hint): hint for hint in hints}
+        self.select = discord.ui.Select(
+            placeholder=t("Choose a hint to mark", lang),
+            options=[
+                discord.SelectOption(
+                    label=clip(f"{hint.item}{SEPARATOR}{hint.location}", CHOICE_NAME),
+                    value=self._key(hint),
+                    description=clip(hint_status_label(hint.status, lang), CHOICE_NAME),
+                )
+                for hint in hints
+            ],
+        )
+        self.select.callback = self._on_select
+        self.add_item(self.select)
+
+    @staticmethod
+    def _key(hint: HintView) -> str:
+        return f"{hint.finder_slot}:{hint.location_id}"
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
+        await interaction.client.on_app_command_error(interaction, error)
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        hint = self._hints[self.select.values[0]]
+        question = t("How important is this item to you?", self._lang)
+        embed = notice_embed(f"{line_for_me(hint, self._lang)}\n{question}")
+        view = hint_status_view(self._game_id, self._slot, hint.finder_slot, hint.location_id, self._lang)
+        await interaction.response.edit_message(embed=embed, view=view)
+        self.stop()
+
+
+def hint_picker(author_id: int, lang: str, game_id: int, slot: int, hints: Sequence[HintView]) -> HintPickerView | None:
+    """The picker for the hints that can be marked (the manager sent their numbers, they are for the person and not
+    found yet); None when there are none. Discord shows 25 options at most."""
+    markable = [hint for hint in hints_for_me(hints) if hint.finder_slot is not None and hint.location_id is not None]
+    return HintPickerView(author_id, lang, game_id, slot, markable[:SELECT_OPTIONS]) if markable else None

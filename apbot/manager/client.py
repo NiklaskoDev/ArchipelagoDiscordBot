@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 TIMEOUT = httpx.Timeout(10, connect=5)
 CONTROL_TIMEOUT = httpx.Timeout(60, connect=5)  # stopping a game waits for its server to save and exit (up to ~25 s)
 TRACKER_TIMEOUT = httpx.Timeout(30, connect=5)  # the manager reads the game's save to answer
+ACTION_TIMEOUT = httpx.Timeout(30, connect=5)  # release, collect and hint changes wait up to 20 s for the game's server
 RETRY_DELAYS = (0.5, 1.0, 2.0)  # seconds before each retry of a read
 MAX_DETAIL_LENGTH = 300
 UNAVAILABLE_STATUSES = frozenset({502, 503, 504})
@@ -81,12 +82,16 @@ class ManagerClient:
         await self._http.aclose()
 
     async def _send(
-        self, method: str, path: str, token: str | None, *, timeout: httpx.Timeout | None = None
+        self, method: str, path: str, token: str | None, *, timeout: httpx.Timeout | None = None, body: Any = None
     ) -> Any:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         try:
             response = await self._http.request(
-                method, path, headers=headers, timeout=timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT
+                method,
+                path,
+                headers=headers,
+                json=body,
+                timeout=timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT,
             )
         except httpx.HTTPError as exc:
             # str(exc) can carry the request URL; the class name is enough to tell timeouts from refused connections.
@@ -108,9 +113,12 @@ class ManagerClient:
                 await self._sleep(delay)
         return await self._send("GET", path, token, timeout=timeout)
 
-    async def _post(self, path: str, token: str, *, timeout: httpx.Timeout | None = None) -> Any:
-        """A change without a body. Never retried: the first try may have worked even when no answer came back."""
-        return await self._send("POST", path, token, timeout=timeout)
+    async def _post(self, path: str, token: str, *, timeout: httpx.Timeout | None = None, body: Any = None) -> Any:
+        """A change. Never retried: the first try may have worked even when no answer came back."""
+        return await self._send("POST", path, token, timeout=timeout, body=body)
+
+    async def _put(self, path: str, token: str, body: Any, *, timeout: httpx.Timeout | None = None) -> Any:
+        return await self._send("PUT", path, token, timeout=timeout, body=body)
 
     async def health(self) -> dict:
         return await self._get("/api/health", None)
@@ -154,3 +162,45 @@ class ManagerClient:
     async def cancel_handover(self, token: str, game_id: int, slot: int) -> dict:
         """The player takes their offer back, or the person it was offered to declines. Not retried, like every change."""
         return await self._send("DELETE", f"/api/games/{int(game_id)}/slots/{int(slot)}/handover", token)
+
+    # --- the player's tools: text client, hints, slot status, claiming and handing over -----------------------------
+    async def client_poll(self, token: str, game_id: int, slot: int, after: int) -> dict:
+        """Opens the player's text client connection (or keeps it open) and returns the messages after `after`:
+        `{state, error, last, messages, hint_points, hint_cost}`. A change as far as the manager is concerned (it
+        starts a connection), so not retried."""
+        path = f"/api/games/{int(game_id)}/slots/{int(slot)}/client"
+        return await self._post(path, token, body={"after": max(int(after), 0)})
+
+    async def client_say(self, token: str, game_id: int, slot: int, text: str) -> dict:
+        path = f"/api/games/{int(game_id)}/slots/{int(slot)}/client/say"
+        return await self._post(path, token, body={"text": text})
+
+    async def client_names(self, token: str, game_id: int, slot: int) -> dict:
+        """The item and location names of the slot's world: `{items, locations}`, both empty until a text client
+        connection of this player has loaded them."""
+        return await self._get(f"/api/games/{int(game_id)}/slots/{int(slot)}/client/names", token)
+
+    async def slot_action(self, token: str, game_id: int, slot: int, action: str) -> dict:
+        """`release` or `collect` for the player: `{done, message}`, the server's answer."""
+        path = f"/api/games/{int(game_id)}/slots/{int(slot)}/action"
+        return await self._post(path, token, timeout=ACTION_TIMEOUT, body={"action": action})
+
+    async def set_hint_status(
+        self, token: str, game_id: int, slot: int, finder: int, location: int, status: int
+    ) -> dict:
+        """Marks a hint for one of the player's items (10 no priority, 20 avoid, 30 priority): `{status}`."""
+        path = f"/api/games/{int(game_id)}/slots/{int(slot)}/hints/{int(finder)}/{int(location)}"
+        return await self._put(path, token, {"status": int(status)}, timeout=ACTION_TIMEOUT)
+
+    async def set_slot_status(self, token: str, game_id: int, slot: int, status: str | None, note: str) -> dict:
+        """What the player says about how they are doing (playing, stuck, away; None clears it)."""
+        path = f"/api/games/{int(game_id)}/slots/{int(slot)}/status"
+        return await self._put(path, token, {"status": status, "note": note})
+
+    async def claim(self, token: str, game_id: int, slot: int) -> dict:
+        return await self._post(f"/api/games/{int(game_id)}/slots/{int(slot)}/claim", token)
+
+    async def offer_handover(self, token: str, game_id: int, slot: int, to: str | None, note: str) -> dict:
+        """Offers a slot to the user named `to`, or to whoever takes it when `to` is None."""
+        path = f"/api/games/{int(game_id)}/slots/{int(slot)}/handover"
+        return await self._put(path, token, {"to": to, "note": note})

@@ -193,7 +193,7 @@ def signups_embed(signups: Sequence[SignupSummary], lang: str) -> discord.Embed:
     return _list_embed(title, [_signup_line(s, lang) for s in signups[:LIST_LINES]], len(signups), lang)
 
 
-def _field_lines(lines: Sequence[str], empty: str, lang: str) -> str:
+def field_lines(lines: Sequence[str], empty: str, lang: str) -> str:
     """Lines for one field: those that fit, and how many were left out; `empty` when there are none."""
     if not lines:
         return empty
@@ -210,12 +210,12 @@ def overview_embed(games: Sequence[GameSummary], signups: Sequence[SignupSummary
     signup_lines = [_signup_line(s, lang) for s in signups]
     embed.add_field(
         name=t("Games", lang),
-        value=_field_lines(game_lines, t("No games are running. Organizers can add one in the manager.", lang), lang),
+        value=field_lines(game_lines, t("No games are running. Organizers can add one in the manager.", lang), lang),
         inline=False,
     )
     embed.add_field(
         name=t("Sign-ups", lang),
-        value=_field_lines(
+        value=field_lines(
             signup_lines, t("No sign-up rounds are open. Organizers can open one in the manager.", lang), lang
         ),
         inline=False,
@@ -240,6 +240,16 @@ def game_state_embed(game: GameSummary, lang: str) -> discord.Embed:
         description=_label(_STATE_LABELS, game.state, lang),
         colour=STATE_COLOURS.get(game.state, ACCENT),
     )
+
+
+def server_answer_embed(lines: Sequence[str], hidden: int, lang: str) -> discord.Embed:
+    """What the game's server answered a command: its lines (already escaped), and how many were left out."""
+    if not lines:
+        return discord.Embed(description=t("The server did not answer. Try again in a moment.", lang), colour=WARNING)
+    text = "\n".join(lines)
+    if hidden:
+        text += "\n" + _more_line(hidden, lang)
+    return discord.Embed(description=text, colour=ACCENT)
 
 
 def linked_embed(manager_username: str, lang: str) -> discord.Embed:

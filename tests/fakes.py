@@ -86,9 +86,15 @@ def entry(seq: int, kind: str, **fields) -> dict:
     return {"seq": seq, "at": 1_700_000_000.0 + seq, "kind": kind, **fields}
 
 
-def tracker_json(hints=()) -> dict:
-    return {"slot": 1, "name": "Alice", "game": "Timespinner", "goal": False, "items": [], "locations": [],
-            "hints": list(hints), "hints_used": 0, "items_left": 0, "release": "available", "collect": "available"}
+def tracker_json(hints=(), **overrides) -> dict:
+    tracker = {"slot": 1, "name": "Alice", "game": "Timespinner", "goal": False, "items": [], "locations": [],
+               "hints": list(hints), "hints_used": 0, "items_left": 0, "hint_points": 12, "hint_cost": 5,
+               "points_per_check": 1, "release": "available", "collect": "available"}
+    return {**tracker, **overrides}
+
+
+def received_json(item="Sword", flags=0, sender="Bob", location="Chest", start=False) -> dict:
+    return {"item": item, "from": sender, "location": location, "flags": flags, "start": start}
 
 
 def hint_json(item="Sword", receiver="Alice", finder="Bob", location="Chest", **overrides) -> dict:
@@ -467,7 +473,9 @@ class FakeInteraction:
         roles=(),
         guild_id: int | None = None,
         manage_guild: bool = False,
+        namespace: dict | None = None,
     ):
+        self.namespace = SimpleNamespace(**(namespace or {}))  # the options typed so far, for autocomplete
         self.client = bot
         self.locale = locale
         self.user = FakeUser(user_id, roles)

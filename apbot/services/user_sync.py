@@ -92,6 +92,11 @@ class UserSync:
         game = self._states.get(discord_id, {}).get(game_id)
         return game.my_slots if game else ()
 
+    def games_of(self, discord_id: int) -> list[UserGame]:
+        """The games a person plays in, as the latest look saw them: those still going first, then the newest."""
+        games = [game for game in self._states.get(discord_id, {}).values() if game.my_slots]
+        return sorted(games, key=lambda game: (game.finished_at is not None, -game.id))
+
     def participants(self, game_id: int) -> dict[int, tuple[SlotRef, ...]]:
         """The linked people who play in a game, with their slots."""
         found = {}

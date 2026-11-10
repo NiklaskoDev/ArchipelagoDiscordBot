@@ -12,6 +12,9 @@ from apbot.cogs.games import GamesCog
 from apbot.cogs.linking import LinkingCog
 from apbot.cogs.setup import SetupCog
 from apbot.cogs.signups import SignupsCog
+from apbot.cogs.slots import SlotsCog
+from apbot.cogs.textclient import TextClientCog
+from apbot.cogs.tracker import TrackerCog
 from apbot.i18n import LANGUAGES, BotTranslator, de, fr, language_of, nl, t
 
 CATALOGS = {"de": de, "fr": fr, "nl": nl}
@@ -111,6 +114,9 @@ async def command_payloads(tmp_path, manager) -> list[dict]:
     await bot.add_cog(LinkingCog(bot))
     await bot.add_cog(SetupCog(bot))
     await bot.add_cog(AlertsCog(bot))
+    await bot.add_cog(TrackerCog(bot))
+    await bot.add_cog(TextClientCog(bot))
+    await bot.add_cog(SlotsCog(bot))
     translator = BotTranslator()
     payloads = [await command.get_translated_payload(bot.tree, translator) for command in bot.tree.get_commands()]
     await bot.close()
@@ -119,6 +125,7 @@ async def command_payloads(tmp_path, manager) -> list[dict]:
 
 COMMAND_NAMES = {
     "games", "game", "signups", "wake", "start", "stop", "restart", "link", "unlink", "mydata", "setup", "alerts",
+    "tracker", "hints", "hint", "hint_location", "remaining", "say", "release", "collect", "status", "claim", "handover",
 }
 LOCALES = {"de", "fr", "nl"}
 

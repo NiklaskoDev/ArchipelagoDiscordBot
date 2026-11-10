@@ -14,6 +14,9 @@ from apbot.cogs.games import GamesCog
 from apbot.cogs.linking import LinkingCog
 from apbot.cogs.setup import SetupCog
 from apbot.cogs.signups import SignupsCog
+from apbot.cogs.slots import SlotsCog
+from apbot.cogs.textclient import TextClientCog
+from apbot.cogs.tracker import TrackerCog
 from apbot.config import Config
 from apbot.crypto import TokenCipher
 from apbot.db.database import DATABASE_FILE, Database
@@ -38,8 +41,10 @@ from apbot.services.manager_watch import RETRY_INTERVAL, ManagerWatch, StartupFa
 from apbot.services.overview import OVERVIEW_INTERVAL, Overview
 from apbot.services.relay import MAINTAIN_INTERVAL, Relay
 from apbot.services.scheduler import Periodic, StopPeriodic
+from apbot.services.slots import SlotDirectory
+from apbot.services.text_client import TextClientBridge
 from apbot.services.user_sync import SYNC_INTERVAL, UserSync
-from apbot.ui.dynamic import HandoverAcceptButton, HandoverDeclineButton
+from apbot.ui.dynamic import HandoverAcceptButton, HandoverDeclineButton, HintStatusButton
 from apbot.ui.embeds import error_embed
 
 log = logging.getLogger(__name__)
@@ -68,6 +73,8 @@ class ApBot(commands.Bot):
         self._overview_store = OverviewStore(self.db)
         self._event_store = ScheduledEventStore(self.db)
         self.user_sync = UserSync(self.links, self.access, self.manager)
+        self.slots = SlotDirectory(self.manager)
+        self.text_client = TextClientBridge(self.manager)
         self.relay = Relay(
             self, self.spaces, self.guild_settings, self.cache, self.manager, config.manager_api_token,
             self.user_sync.memberships,
@@ -116,7 +123,10 @@ class ApBot(commands.Bot):
         await self.add_cog(LinkingCog(self))
         await self.add_cog(SetupCog(self))
         await self.add_cog(AlertsCog(self))
-        self.add_dynamic_items(HandoverAcceptButton, HandoverDeclineButton)
+        await self.add_cog(TrackerCog(self))
+        await self.add_cog(TextClientCog(self))
+        await self.add_cog(SlotsCog(self))
+        self.add_dynamic_items(HandoverAcceptButton, HandoverDeclineButton, HintStatusButton)
         await self._sync_commands()
         for task in self._periodic:
             task.start()

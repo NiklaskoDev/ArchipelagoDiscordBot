@@ -13,6 +13,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 PLAYER_SLOT_TYPE = 1  # Archipelago: 1 is a player, 2 a group of players
+RECENT_PROGRESSION = 10  # progression items a tracker keeps
 
 # The activity feed's entry kinds, each with the fields the bot reads. Anything else in an entry is dropped.
 FEED_FIELDS: dict[str, tuple[str, ...]] = {
@@ -41,6 +42,8 @@ class SlotView:
     locations: int
     status: str | None  # online | offline | goal
     player_status: str | None  # what the player says: playing | stuck | away
+    slot: int = field(default=-1, kw_only=True)  # the slot's number in the multiworld
+    claimable: bool = field(default=False, kw_only=True)  # the person who asked may claim it
 
 
 @dataclass(frozen=True)
@@ -138,10 +141,47 @@ class HintView:
     found: bool
     for_me: bool
     in_my_world: bool
+    status: int = field(default=0, kw_only=True)  # 10 no priority, 20 avoid, 30 priority, 40 found; 0 when not marked
+    # What the server knows the hint by, to change its status; None when the manager did not send them.
+    finder_slot: int | None = field(default=None, kw_only=True)
+    location_id: int | None = field(default=None, kw_only=True)
+
+
+FLAG_PROGRESSION = 0b001  # Archipelago's item classification: the item is needed to finish
+RULES = ("available", "after_goal", "automatic", "disabled", "done")  # what !release and !collect would do now
+
+
+@dataclass(frozen=True)
+class TrackerView:
+    """One slot's tracker: counts and the newest progression items instead of every item and location."""
+
+    name: str
+    game: str
+    goal: bool
+    received: int
+    recent_progression: tuple[str, ...]  # the newest ones last
+    checked: int
+    total: int
+    hints_used: int
+    hint_points: int | None
+    hint_cost: int
+    release: str  # one of RULES
+    collect: str
+    hints: tuple[HintView, ...]
 
 
 def _int(value: Any, default: int = 0) -> int:
     return value if isinstance(value, int) and not isinstance(value, bool) else default
+
+
+def _optional_int(value: Any) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) else None
+
+
+def _id_or_none(value: Any) -> int | None:
+    """A slot or location number the server uses; None when absent or not a non-negative number."""
+    number = _optional_int(value)
+    return number if number is not None and number >= 0 else None
 
 
 def _number(value: Any) -> float | None:
@@ -161,6 +201,8 @@ def _slot(raw: Mapping) -> SlotView:
         locations=_int(raw.get("locations")),
         status=_text(raw.get("status")),
         player_status=_text(raw.get("player_status")),
+        slot=_int(raw.get("slot"), -1),
+        claimable=bool(raw.get("claimable")),
     )
 
 
@@ -287,9 +329,40 @@ def parse_hints(raw: Any) -> tuple[HintView, ...]:
             found=bool(hint.get("found")),
             for_me=bool(hint.get("for_me")),
             in_my_world=bool(hint.get("in_my_world")),
+            status=_int(hint.get("status")),
+            finder_slot=_id_or_none(hint.get("finder_slot")),
+            location_id=_id_or_none(hint.get("location_id")),
         )
         for hint in raw["hints"]
         if isinstance(hint, Mapping)
+    )
+
+
+def _rule(value: Any) -> str:
+    """A rule the manager reports; one the bot does not know counts as available, so the server decides."""
+    return value if value in RULES else "available"
+
+
+def parse_tracker(raw: Any) -> TrackerView:
+    """Raises ValueError when the answer is not a tracker."""
+    hints = parse_hints(raw)
+    items = [item for item in raw.get("items") or [] if isinstance(item, Mapping)]
+    locations = [location for location in raw.get("locations") or [] if isinstance(location, Mapping)]
+    progression = [_text(item.get("item")) or "?" for item in items if _int(item.get("flags")) & FLAG_PROGRESSION]
+    return TrackerView(
+        name=_text(raw.get("name")) or "?",
+        game=_text(raw.get("game")) or "?",
+        goal=bool(raw.get("goal")),
+        received=len(items),
+        recent_progression=tuple(progression[-RECENT_PROGRESSION:]),
+        checked=sum(1 for location in locations if location.get("checked")),
+        total=len(locations),
+        hints_used=_int(raw.get("hints_used")),
+        hint_points=_optional_int(raw.get("hint_points")),
+        hint_cost=_int(raw.get("hint_cost")),
+        release=_rule(raw.get("release")),
+        collect=_rule(raw.get("collect")),
+        hints=hints,
     )
 
 

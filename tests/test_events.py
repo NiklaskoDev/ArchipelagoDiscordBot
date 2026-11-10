@@ -215,3 +215,58 @@ async def test_nothing_happens_before_the_games_are_loaded_or_discord_is_connect
     world.discord._ready = False
     await world.events.sync()
     assert world.guild.created_events == []
+
+
+async def test_an_event_discord_refuses_does_not_keep_the_others_of_the_server_from_syncing(world):
+    real_create = world.guild.create_scheduled_event
+
+    async def refuse_the_first_game(**kwargs):
+        if kwargs["name"] == "Start: First":
+            raise forbidden()
+        return await real_create(**kwargs)
+
+    world.guild.create_scheduled_event = refuse_the_first_game
+    await world.games(
+        game_json(1, "First", start=planned(NOW + HOUR)), game_json(2, "Second", start=planned(NOW + 2 * HOUR))
+    )
+    world.signups(signup_json(3, "Spring Async", deadline=NOW + HOUR))
+    await world.events.sync()
+    assert [event["name"] for event in world.guild.created_events] == ["Start: Second", "Sign-ups close: Spring Async"]
+    assert set(world.rows()) == {("game_start", 2), ("signup_deadline", 3)}
+
+
+async def test_a_refused_move_keeps_the_stored_time_so_it_is_tried_again_and_the_others_still_move(world):
+    await world.games(
+        game_json(1, "First", start=planned(NOW + HOUR)), game_json(2, "Second", start=planned(NOW + 2 * HOUR))
+    )
+    await world.events.sync()
+    first, second = world.guild.events[min(world.guild.events)], world.guild.events[max(world.guild.events)]
+
+    async def refuse(**kwargs):
+        raise forbidden()
+
+    first.edit = refuse
+    await world.games(
+        game_json(1, "First", start=planned(NOW + 4 * HOUR)), game_json(2, "Second", start=planned(NOW + 5 * HOUR))
+    )
+    await world.events.sync()
+    assert second.edits and second.edits[0]["start_time"] == at(NOW + 5 * HOUR)
+    assert world.rows()[("game_start", 1)].starts_at == NOW + HOUR  # not stored, so the next sync tries again
+    assert world.rows()[("game_start", 2)].starts_at == NOW + 5 * HOUR
+
+
+async def test_a_refused_delete_does_not_keep_other_events_from_being_deleted_or_created(world):
+    await world.games(game_json(1, "First", start=planned(NOW + HOUR)), game_json(2, "Second", start=planned(NOW + 2 * HOUR)))
+    await world.events.sync()
+    first = world.guild.events[min(world.guild.events)]
+    second = world.guild.events[max(world.guild.events)]
+
+    async def refuse():
+        raise forbidden()
+
+    first.delete = refuse
+    await world.games(game_json(3, "Third", start=planned(NOW + 3 * HOUR)))
+    await world.events.sync()
+    assert second.deleted is True and ("game_start", 2) not in world.rows()
+    assert ("game_start", 1) in world.rows()  # kept, so the delete is tried again
+    assert ("game_start", 3) in world.rows()
