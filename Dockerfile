@@ -23,7 +23,8 @@ ARG VERSION=dev
 LABEL org.opencontainers.image.title="Archipelago Discord bot" \
       org.opencontainers.image.description="Discord bot for Archipelago multiworld games, using the Archipelago Manager's REST API" \
       org.opencontainers.image.source="https://github.com/NiklaskoDev/ArchipelagoDiscordBot" \
-      org.opencontainers.image.licenses="MIT" \n      org.opencontainers.image.version="${VERSION}"
+      org.opencontainers.image.licenses="MIT" \
+      org.opencontainers.image.version="${VERSION}"
 
 # tini passes SIGTERM on and reaps child processes. tzdata makes the TZ setting work (the slim image has none). The
 # entrypoint drops root with util-linux's setpriv, which the base image already has.
