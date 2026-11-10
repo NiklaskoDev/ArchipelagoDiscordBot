@@ -9,7 +9,7 @@ When a game is finished the thread gets a summary, is archived and locked, and t
 import contextlib
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import discord
@@ -25,14 +25,15 @@ from apbot.services.game_cache import GameCache
 from apbot.ui.embeds import game_detail_embeds, game_state_embed
 from apbot.ui.feed import batch_lines, feed_line
 from apbot.ui.format import clip, safe_text
-from apbot.ui.style import NAME_LIMIT
+from apbot.ui.style import DISCORD_NAME_LIMIT, NAME_LIMIT
 
 log = logging.getLogger(__name__)
 
 MAINTAIN_INTERVAL = 60  # seconds, see Periodic in bot.py
-THREAD_NAME_LIMIT = 100  # Discord's limit for the name of a thread and of a role
 THREAD_ARCHIVE_MINUTES = 10080  # a quiet thread folds away after a week; posting into it opens it again
-MEMBER_RECHECK = 600  # seconds before the bot looks again whether a linked person has joined a server
+# Seconds before the bot looks at a person's roles in a server again: they may have joined, left and come back (the
+# bot has no members intent, so it is not told), or the roles could not be changed and a retry now would fail again.
+MEMBER_RECHECK = 600
 ROLE_PREFIX = "AP "
 _NO_MENTIONS = discord.AllowedMentions.none()
 
@@ -59,7 +60,7 @@ class Relay:
         self._memberships = memberships
         self._now = now
         self._states: dict[int, str] = {}  # the state of each game at the last look, to notice one coming online
-        self._applied: dict[tuple[int, int], tuple[frozenset[int], frozenset[int], float | None]] = {}
+        self._applied: dict[tuple[int, int], tuple[frozenset[int], frozenset[int], float]] = {}
 
     # --- threads and roles -----------------------------------------------------------------------------------------
     async def maintain(self) -> None:
@@ -91,27 +92,36 @@ class Relay:
         for space in self._spaces.open_for_guild(guild.id):
             game = games.get(space.game_id)
             if game is None or game.finished_at is not None:
-                await self._close(guild, space, settings)
-                changed = True
-            elif await self._repair(guild, space, game):
-                changed = True
+                changed |= await self._attempt(space.game_id, self._close(guild, space, settings), changed=True)
+            else:
+                changed |= await self._attempt(space.game_id, self._repair(guild, space, game))
         if settings.games_channel_id is not None:
             channel = guild.get_channel(settings.games_channel_id)
             for game in shown:
                 if channel is not None and self._spaces.get(guild.id, game.id) is None:
-                    await self._create(guild, channel, game, settings)
-                    changed = True
+                    changed |= await self._attempt(game.id, self._create(guild, channel, game, settings), changed=True)
         for game in online:
             space = self._spaces.get(guild.id, game.id)
             if space is not None and space.closed_at is None:
-                await self._announce_online(guild, space, game, settings)
+                await self._attempt(game.id, self._announce_online(guild, space, game, settings))
         return changed
+
+    async def _attempt(self, game_id: int, work: Awaitable[Any], *, changed: bool | None = None) -> bool:
+        """Does one game's part of the pass. A refusal from Discord (a missing permission, a role above the bot's) is
+        logged and must not keep the other games of the server from theirs. Returns whether something changed:
+        `changed` when the work succeeded and says so, else what the work returned."""
+        try:
+            result = await work
+        except discord.HTTPException as exc:
+            log.warning("Could not update the thread or role of game %s: %s", game_id, exc.text or exc.status)
+            return False
+        return bool(result) if changed is None else changed
 
     async def _create(self, guild: Any, channel: Any, game: GameSummary, settings: GuildSettings) -> None:
         """A thread with the game's facts as its first message, then the role. The space is saved after the thread, so a
         failing role is made later (see `_repair`)."""
         thread = await channel.create_thread(
-            name=clip(game.name, THREAD_NAME_LIMIT),
+            name=clip(game.name, DISCORD_NAME_LIMIT),
             type=discord.ChannelType.public_thread,
             auto_archive_duration=THREAD_ARCHIVE_MINUTES,
             reason="Archipelago game",
@@ -129,7 +139,7 @@ class Relay:
 
     async def _make_role(self, guild: Any, space: GameSpace, game: GameSummary) -> None:
         role = await guild.create_role(
-            name=clip(ROLE_PREFIX + game.name, THREAD_NAME_LIMIT),
+            name=clip(ROLE_PREFIX + game.name, DISCORD_NAME_LIMIT),
             permissions=discord.Permissions.none(),
             mentionable=False,
             reason="Archipelago game",
@@ -225,7 +235,7 @@ class Relay:
             managed = frozenset(space.role_id for space in spaces)
             wanted = frozenset(space.role_id for space in spaces if space.game_id in game_ids)
             known = self._applied.get((guild.id, discord_id))
-            if known and known[:2] == (wanted, managed) and (known[2] is None or self._now() < known[2]):
+            if known and known[:2] == (wanted, managed) and self._now() < known[2]:
                 continue
             try:
                 member = await self._member(guild, discord_id)
@@ -233,10 +243,8 @@ class Relay:
                     await self._apply_roles(guild, member, wanted, managed)
             except discord.HTTPException as exc:
                 log.warning("Could not change a member's game roles: %s", exc.text or exc.status)
-                continue
-            # a person who is not in the server yet is looked for again later; a member stays as set
-            recheck_at = self._now() + MEMBER_RECHECK if member is None else None
-            self._applied[(guild.id, discord_id)] = (wanted, managed, recheck_at)
+            # also after a failure: the same refusal is not asked (and logged) again for every person every cycle
+            self._applied[(guild.id, discord_id)] = (wanted, managed, self._now() + MEMBER_RECHECK)
 
     async def _member(self, guild: Any, discord_id: int) -> Any | None:
         try:

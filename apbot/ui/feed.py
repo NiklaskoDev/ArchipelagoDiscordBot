@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 
 from apbot.i18n import t, translatable
 from apbot.manager.views import FeedEntry
+from apbot.ui.embeds import PLAYER_STATUS_LABELS
 from apbot.ui.format import clip, safe_text
 from apbot.ui.style import MESSAGE, NAME_LIMIT, SEPARATOR
 
@@ -35,11 +36,6 @@ _HINT_STATUS_LABELS = {
     "priority": translatable("priority"),
     "no priority": translatable("no priority"),
     "avoid": translatable("avoid"),
-}
-_PLAYER_STATUS_LABELS = {
-    "playing": translatable("Playing"),
-    "stuck": translatable("Stuck"),
-    "away": translatable("Away"),
 }
 
 
@@ -75,7 +71,7 @@ def _status(entry: FeedEntry, lang: str) -> str:
     raw = entry.get("status")
     if not raw:
         return t("**{player}** cleared their status", lang, player=player)
-    label = t(_PLAYER_STATUS_LABELS[raw], lang) if raw in _PLAYER_STATUS_LABELS else _name(entry, "status")
+    label = t(PLAYER_STATUS_LABELS[raw], lang) if raw in PLAYER_STATUS_LABELS else _name(entry, "status")
     return _with_note(t("**{player}** changed their status to {status}", lang, player=player, status=label), entry)
 
 

@@ -22,14 +22,13 @@ from apbot.manager.errors import ManagerError
 from apbot.manager.views import SignupSummary, parse_signups
 from apbot.services.game_cache import GameCache
 from apbot.ui.format import clip
+from apbot.ui.style import DISCORD_NAME_LIMIT
 
 log = logging.getLogger(__name__)
 
 EVENTS_INTERVAL = 300  # seconds, see Periodic in bot.py
 GAME_EVENT_LENGTH = timedelta(hours=3)
 DEADLINE_EVENT_LENGTH = timedelta(minutes=15)
-NAME_LIMIT = 100  # Discord's limits for an event's name and its location
-LOCATION_LIMIT = 100
 FALLBACK_LOCATION = "Archipelago"
 MOVED_BY = 1  # seconds a start may differ from the stored one before the event is moved (rounding)
 
@@ -94,19 +93,19 @@ class Events:
             if game.visibility != "all" or game.finished_at is not None or not game.start_at or game.start_at <= now:
                 continue
             wanted[(GAME_START, game.id)] = WantedEvent(
-                name=clip(t("Start: {game}", lang, game=game.name), NAME_LIMIT),
+                name=clip(t("Start: {game}", lang, game=game.name), DISCORD_NAME_LIMIT),
                 starts_at=game.start_at,
                 ends_at=(_when(game.start_at) + GAME_EVENT_LENGTH).timestamp(),
-                location=clip(game.address or site or FALLBACK_LOCATION, LOCATION_LIMIT),
+                location=clip(game.address or site or FALLBACK_LOCATION, DISCORD_NAME_LIMIT),
             )
         for signup in signups:
             if not signup.open or not signup.deadline or signup.deadline <= now:
                 continue
             wanted[(SIGNUP_DEADLINE, signup.id)] = WantedEvent(
-                name=clip(t("Sign-ups close: {name}", lang, name=signup.name), NAME_LIMIT),
+                name=clip(t("Sign-ups close: {name}", lang, name=signup.name), DISCORD_NAME_LIMIT),
                 starts_at=signup.deadline,
                 ends_at=(_when(signup.deadline) + DEADLINE_EVENT_LENGTH).timestamp(),
-                location=clip(site or FALLBACK_LOCATION, LOCATION_LIMIT),
+                location=clip(site or FALLBACK_LOCATION, DISCORD_NAME_LIMIT),
             )
         return wanted
 

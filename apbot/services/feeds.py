@@ -110,8 +110,9 @@ class FeedPoller:
         try:
             page = parse_activity(await self._client.activity(token, game.id, cursor or 0))
         except TokenInvalid:
-            if owner is not None:
-                self._access.on_token_invalid(owner)
+            link = self._links.get(owner) if owner is not None else None
+            if link is not None:
+                await self._user_sync.token_refused(link)
             return
         except ManagerError as exc:
             log.debug("Could not read the activity of game %s: %s", game.id, exc.detail)

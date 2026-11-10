@@ -75,11 +75,6 @@ class GameSpaceStore:
             (guild_id, game_id, thread_id, role_id, json.dumps(list(kinds)), self._now()),
         )
 
-    def set_thread(self, guild_id: int, game_id: int, thread_id: int | None) -> None:
-        self._db.execute(
-            "UPDATE game_spaces SET thread_id = ? WHERE guild_id = ? AND game_id = ?", (thread_id, guild_id, game_id)
-        )
-
     def set_role(self, guild_id: int, game_id: int, role_id: int | None) -> None:
         self._db.execute(
             "UPDATE game_spaces SET role_id = ? WHERE guild_id = ? AND game_id = ?", (role_id, guild_id, game_id)
@@ -190,9 +185,6 @@ class ScheduledEventStore:
     def for_guild(self, guild_id: int) -> list[ScheduledEventRow]:
         rows = self._db.query_all("SELECT * FROM scheduled_events WHERE guild_id = ?", (guild_id,))
         return [ScheduledEventRow(**{key: row[key] for key in row.keys()}) for row in rows]
-
-    def guilds(self) -> list[int]:
-        return [row["guild_id"] for row in self._db.query_all("SELECT DISTINCT guild_id FROM scheduled_events")]
 
     def save(self, guild_id: int, source: str, source_id: int, event_id: int, starts_at: float) -> None:
         self._db.execute(

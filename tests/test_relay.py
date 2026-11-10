@@ -504,3 +504,95 @@ async def test_unlinking_removes_the_person_from_the_game_roles_in_every_server(
     await task
     assert bot.links.get(1001) is None
     assert member.removed == [role_id] and not member.get_role(role_id)
+
+
+# --- one refusal does not stop the others ------------------------------------------------------------------------------
+async def test_a_role_that_cannot_be_made_for_one_game_does_not_stop_the_next_game_getting_its_space(world, bot, monkeypatch):
+    original = world.guild.create_role
+
+    async def refuse_for_bad(**kwargs):
+        if kwargs["name"] == "AP Bad":
+            raise forbidden()
+        return await original(**kwargs)
+
+    monkeypatch.setattr(world.guild, "create_role", refuse_for_bad)
+    await world.games(game_json(7, "Bad"), game_json(8, "Good"))
+    await world.relay.maintain()
+    assert bot.spaces.get(GUILD, 8).role_id is not None and len(world.threads) == 2
+    assert bot.spaces.get(GUILD, 7).role_id is None  # made later, when permitted
+
+
+async def test_a_thread_that_cannot_be_made_for_one_game_does_not_stop_the_next_game(world, bot, monkeypatch):
+    original = world.channel.create_thread
+
+    async def refuse_for_bad(**kwargs):
+        if kwargs["name"] == "Bad":
+            raise forbidden()
+        return await original(**kwargs)
+
+    monkeypatch.setattr(world.channel, "create_thread", refuse_for_bad)
+    await world.games(game_json(7, "Bad"), game_json(8, "Good"))
+    await world.relay.maintain()
+    assert bot.spaces.get(GUILD, 7) is None and bot.spaces.get(GUILD, 8).role_id is not None
+
+
+async def test_a_game_that_cannot_be_closed_does_not_stop_the_others_being_closed_or_announced(world, bot):
+    await world.games(game_json(7, "One", state="stopped"), game_json(8, "Two"), game_json(9, "Three", state="stopped"))
+    await world.relay.maintain()
+    one = next(t for t in world.threads if t.name == "One")
+    two = next(t for t in world.threads if t.name == "Two")
+    three = next(t for t in world.threads if t.name == "Three")
+    one.fail_with = forbidden()
+    await world.games(
+        game_json(7, "One", finished_at=1_700_000_500.0), game_json(8, "Two", finished_at=1_700_000_500.0),
+        game_json(9, "Three", state="running"),
+    )
+    await world.relay.maintain()
+    assert bot.spaces.get(GUILD, 8).closed_at is not None and two.archived is True
+    assert three.sent[-1].content.startswith("<@&") and "**Three** is online" in three.sent[-1].content
+
+
+# --- roles that cannot be changed, and people who come back ------------------------------------------------------------
+async def test_roles_that_cannot_be_given_are_not_tried_and_logged_again_for_every_cycle(world, bot, caplog):
+    member, role_id = await ready(world, bot)
+    calls = []
+
+    async def refuse(*roles, reason=None):
+        calls.append(1)
+        raise forbidden()
+
+    member.add_roles = refuse
+    for _ in range(4):
+        await world.relay.sync_roles(1001, frozenset({7}))
+    assert len(calls) == 1
+    assert len([r for r in caplog.records if "game roles" in r.getMessage()]) == 1
+    world.clock.now += MEMBER_RECHECK + 1
+    await world.relay.sync_roles(1001, frozenset({7}))
+    assert len(calls) == 2
+
+
+async def test_a_change_of_games_is_tried_at_once_even_after_a_refusal(world, bot):
+    member, role_id = await ready(world, bot)
+    calls = []
+
+    async def refuse(*roles, reason=None):
+        calls.append(1)
+        raise forbidden()
+
+    member.add_roles = refuse
+    await world.relay.sync_roles(1001, frozenset({7}))
+    await world.relay.sync_roles(1001, frozenset())
+    await world.relay.sync_roles(1001, frozenset({7}))
+    assert len(calls) == 2
+
+
+async def test_someone_who_left_and_came_back_gets_the_role_again(world, bot):
+    member, role_id = await ready(world, bot)
+    await world.relay.sync_roles(1001, frozenset({7}))
+    assert member.get_role(role_id)
+    returned = world.guild.add_member(1001)  # left, and joined again: no roles
+    await world.relay.sync_roles(1001, frozenset({7}))
+    assert returned.added == []  # not looked at yet
+    world.clock.now += MEMBER_RECHECK + 1
+    await world.relay.sync_roles(1001, frozenset({7}))
+    assert returned.added == [role_id]

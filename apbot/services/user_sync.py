@@ -117,6 +117,14 @@ class UserSync:
     def forget(self, discord_id: int) -> None:
         self._states.pop(discord_id, None)
 
+    async def token_refused(self, link: UserLink) -> None:
+        """The manager refused a person's token (here or while reading a game's feed with it): the link is marked
+        invalid, their game roles go and they are told once."""
+        self._access.on_token_invalid(link.discord_user_id)
+        await self._drop(link.discord_user_id)
+        if self._on_token_stopped:
+            await self._on_token_stopped(link)
+
     async def _drop(self, discord_id: int) -> None:
         """Forgets a person whose link no longer works, and tells the listener they play in nothing now (their game
         roles go), if they were known."""
@@ -146,10 +154,7 @@ class UserSync:
         try:
             games = parse_user_games(await self._client.list_games(token))
         except TokenInvalid:
-            self._access.on_token_invalid(discord_id)
-            await self._drop(discord_id)
-            if self._on_token_stopped:
-                await self._on_token_stopped(link)
+            await self.token_refused(link)
             return
         except ManagerError as exc:
             log.debug("Could not look at the games of a linked person: %s", exc.detail)

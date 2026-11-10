@@ -246,3 +246,24 @@ async def test_a_running_game_is_looked_at_every_few_seconds_and_an_idle_one_eve
     assert await looks() == 2
     paths = [r.url.path for r in setup.activity_requests()]
     assert paths.count("/api/games/7/activity") == 4 and paths.count("/api/games/8/activity") == 2
+
+
+async def test_a_players_token_refused_while_reading_a_feed_tells_the_person_and_drops_their_roles(setup):
+    told, memberships = [], []
+
+    async def stopped(link):
+        told.append(link.discord_user_id)
+
+    async def roles(discord_id, game_ids):
+        memberships.append((discord_id, game_ids))
+
+    setup.sync.listen(on_memberships=roles, on_token_stopped=stopped)
+    await setup.load_games()
+    setup.link_user(None)
+    setup.manager.add("GET", "/api/games", by_token({BOT_TOKEN: [], USER_TOKEN: [game_json(9, my_slots=MINE)]}))
+    await setup.sync.sync_user(setup.bot.links.get(1001))
+    setup.feed(9, (401, {"detail": "This API token is not valid (any more)"}))
+    await setup.poller.poll(setup.poller.games()[0])
+    assert told == [1001] and memberships[-1] == (1001, frozenset())
+    assert setup.bot.links.get(1001).status == "invalid"
+    assert setup.poller.games() == []  # nobody is left to read the private game

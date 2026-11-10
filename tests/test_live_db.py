@@ -74,12 +74,11 @@ def test_closing_a_space_keeps_the_row_forgets_the_role_and_lists_it_no_more(db)
     assert spaces.open_for_guild(1) == [] and spaces.open_for_game(7) == []
 
 
-def test_thread_and_role_can_be_replaced(db):
+def test_the_role_can_be_replaced(db):
     spaces = GameSpaceStore(db)
     spaces.create(1, 7, 100, None, DEFAULT_FEED_KINDS)
     spaces.set_role(1, 7, 55)
-    spaces.set_thread(1, 7, 66)
-    assert (spaces.get(1, 7).role_id, spaces.get(1, 7).thread_id) == (55, 66)
+    assert spaces.get(1, 7).role_id == 55
 
 
 # --- feed cursors ------------------------------------------------------------------------------------------------------
@@ -166,7 +165,6 @@ def test_scheduled_events_are_stored_by_what_they_announce(db):
     assert rows == {("game_start", 7): (502, 150.0), ("signup_deadline", 7): (501, 200.0)}
     store.delete(1, "game_start", 7)
     assert [r.source for r in store.for_guild(1)] == ["signup_deadline"]
-    assert store.guilds() == [1]
 
 
 def test_only_known_event_sources_are_accepted(db):

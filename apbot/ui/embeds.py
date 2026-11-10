@@ -47,7 +47,7 @@ _SLOT_STATUS_LABELS = {
     "offline": translatable("Offline"),
     "goal": translatable("Goal reached"),
 }
-_PLAYER_STATUS_LABELS = {
+PLAYER_STATUS_LABELS = {
     "playing": translatable("Playing"),
     "stuck": translatable("Stuck"),
     "away": translatable("Away"),
@@ -112,7 +112,7 @@ def _slot_line(slot: SlotView, lang: str) -> str:
     if slot.status:
         parts.append(_label(_SLOT_STATUS_LABELS, slot.status, lang))
     if slot.player_status:
-        parts.append(_label(_PLAYER_STATUS_LABELS, slot.player_status, lang))
+        parts.append(_label(PLAYER_STATUS_LABELS, slot.player_status, lang))
     return SEPARATOR.join(parts)
 
 
