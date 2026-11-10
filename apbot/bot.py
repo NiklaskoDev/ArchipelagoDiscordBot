@@ -42,6 +42,7 @@ from apbot.services.manager_watch import RETRY_INTERVAL, ManagerWatch, StartupFa
 from apbot.services.overview import OVERVIEW_INTERVAL, Overview
 from apbot.services.relay import MAINTAIN_INTERVAL, Relay
 from apbot.services.scheduler import Periodic, StopPeriodic
+from apbot.services.my_games import MyGames
 from apbot.services.signup_directory import SignupDirectory
 from apbot.services.signup_reminders import REMINDER_INTERVAL, SignupReminders
 from apbot.services.slots import SlotDirectory
@@ -78,6 +79,7 @@ class ApBot(commands.Bot):
         self.user_sync = UserSync(self.links, self.access, self.manager)
         self.slots = SlotDirectory(self.manager)
         self.signup_directory = SignupDirectory(self.manager)
+        self.my_games = MyGames(self.manager)
         self.text_client = TextClientBridge(self.manager)
         self.relay = Relay(
             self, self.spaces, self.guild_settings, self.cache, self.manager, config.manager_api_token,

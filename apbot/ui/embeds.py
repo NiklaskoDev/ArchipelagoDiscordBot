@@ -102,6 +102,13 @@ def games_list_embed(games: Sequence[GameSummary], lang: str) -> discord.Embed:
     return _list_embed(title, [_game_line(g, lang) for g in games[:LIST_LINES]], len(games), lang)
 
 
+def private_games_embed(games: Sequence[GameSummary], lang: str) -> discord.Embed:
+    """The games only the person's own account shows, at most LIST_LINES of them. Sent to that person only."""
+    return _list_embed(
+        t("Private games you can see", lang), [_game_line(g, lang) for g in games[:LIST_LINES]], len(games), lang
+    )
+
+
 def _slot_line(slot: SlotView, lang: str) -> str:
     parts = [
         f"**{safe_text(slot.name, NAME_LIMIT)}**",

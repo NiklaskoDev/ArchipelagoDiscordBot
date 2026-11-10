@@ -133,8 +133,8 @@ class ManagerClient:
     async def auth_status(self, token: str) -> dict:
         return await self._get("/api/auth/status", token)
 
-    async def list_games(self, token: str) -> list[dict]:
-        return await self._get("/api/games", token)
+    async def list_games(self, token: str, *, quick: bool = False) -> list[dict]:
+        return await self._get("/api/games", token, timeout=QUICK_TIMEOUT if quick else None, retry=not quick)
 
     async def game(self, token: str, game_id: int) -> dict:
         return await self._get(f"/api/games/{int(game_id)}", token)

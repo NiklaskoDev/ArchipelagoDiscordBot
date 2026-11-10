@@ -4,7 +4,7 @@ import discord
 from fakes import SECRETS, SITE_URL, game_json, json_text, signup_json, slot_json
 
 from apbot.manager.views import listed_games, parse_game_detail, parse_games, parse_signups
-from apbot.ui.embeds import error_embed, game_detail_embeds, games_list_embed, signups_embed
+from apbot.ui.embeds import error_embed, game_detail_embeds, games_list_embed, private_games_embed, signups_embed
 from apbot.ui.format import ZERO_WIDTH_SPACE
 from apbot.ui.style import DESCRIPTION, ERROR, FIELD_VALUE, FIELDS
 from apbot.ui.views import manager_page_url, open_in_manager_view
@@ -240,3 +240,28 @@ def test_a_very_long_name_that_escaping_doubles_still_fits_a_title():
     title = game_detail_embeds(parsed, "en")[0].title
     assert title == r"\*" * 99 + "…"  # cut before escaping: 199 characters, no dangling backslash
     assert len(game_detail_embeds(parsed, "en")[0]) <= 6000
+
+
+# --- /games, the private part --------------------------------------------------------------------------------------------
+def test_private_games_have_their_own_title_and_the_same_lines_as_the_public_list():
+    embed = private_games_embed(games(2), "en")
+    assert embed.title == "Private games you can see"
+    assert embed.description == games_list_embed(games(2), "en").description
+    assert embed.description.split("\n")[0] == "**Game 2** — Running — Worlds 2 — Players 1/2 — Goals 0/2"
+
+
+def test_forty_private_games_are_cut_to_25_lines_and_say_how_many_are_missing():
+    lines = private_games_embed(games(40), "en").description.split("\n")
+    assert len(lines) == 26 and lines[-1] == "…and 15 more"
+
+
+def test_the_private_games_title_is_localized():
+    assert private_games_embed(games(1), "de").title == "Private Spiele, die du sehen kannst"
+    assert private_games_embed(games(1), "fr").title == "Parties privées que tu peux voir"
+    assert private_games_embed(games(1), "nl").title == "Privéspellen die je kunt zien"
+
+
+def test_private_games_never_show_a_password():
+    parsed = listed_games(parse_games([game_json(1, "Secret", visibility="participants")]))
+    text = json_text(private_games_embed(parsed, "en"))
+    assert all(isinstance(secret, str) and secret not in text for secret in (SECRETS["password"], SECRETS["server_password"]))

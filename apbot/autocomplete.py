@@ -13,10 +13,11 @@ from apbot.errors import NotLinkedError, UserFacingError
 from apbot.i18n import language_of, t
 from apbot.manager.errors import ManagerError
 from apbot.manager.views import GameSummary, listed_games
+from apbot.services.my_games import private_games
 from apbot.services.slots import number_or_none
 from apbot.services.text_client import Names
 from apbot.ui.format import clip
-from apbot.ui.style import AUTOCOMPLETE, CHOICE_NAME
+from apbot.ui.style import AUTOCOMPLETE, CHOICE_NAME, SEPARATOR
 
 if TYPE_CHECKING:
     from apbot.bot import ApBot
@@ -42,6 +43,28 @@ def game_choices(games: list[GameSummary], current: str) -> list[app_commands.Ch
 async def game_choices_public(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
     """Autocomplete for a `game` option that works with the bot's own view of the games."""
     return game_choices(interaction.client.cache.games, current)
+
+
+async def game_choices_visible(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """The public games, and for a linked person the private ones their own account sees (marked "Private"). Only
+    that person sees the suggestions. Without a fresh list from the manager: the last one kept, or public games only."""
+    bot: ApBot = interaction.client
+    lang = language_of(interaction.locale)
+    owner = interaction.user.id
+    try:
+        mine = await bot.my_games.games(owner, bot.access.user_token(interaction), quick=True)
+    except (NotLinkedError, UserFacingError, ManagerError, TypeError) as exc:
+        log.debug("No private games to suggest: %s", exc)
+        mine = bot.my_games.cached(owner) or ()
+    private = private_games(mine, bot.cache.games)
+    if not private:
+        return game_choices(bot.cache.games, current)
+    suffix = SEPARATOR + t("Private", lang)
+    names = {str(game.id): clip(game.name, CHOICE_NAME - len(suffix)) + suffix for game in private}
+    return [
+        app_commands.Choice(name=names.get(choice.value, choice.name), value=choice.value)
+        for choice in game_choices([*bot.cache.games, *private], current)
+    ]
 
 
 def _matches(name: str, current: str) -> bool:

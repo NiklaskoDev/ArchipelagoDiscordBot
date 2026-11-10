@@ -168,3 +168,16 @@ async def test_a_change_keeps_the_409_detail_and_maps_the_other_errors(manager: 
 async def test_the_game_id_is_a_number_in_the_path(manager: FakeManager):
     with pytest.raises(ValueError):
         await manager.client.start(BOT_TOKEN, "7/../../tokens")
+
+
+async def test_a_quick_game_list_gives_up_after_two_seconds_and_is_not_retried(manager: FakeManager):
+    manager.add("GET", "/api/games", (503, {"detail": "busy"}), [])
+    with pytest.raises(ManagerUnavailable):
+        await manager.client.list_games(BOT_TOKEN, quick=True)
+    assert len(manager.requests) == 1 and manager.requests[0].extensions["timeout"]["read"] == 2
+
+
+async def test_a_plain_game_list_is_retried_when_the_manager_is_busy(manager: FakeManager):
+    manager.add("GET", "/api/games", (503, {"detail": "busy"}), [])
+    assert await manager.client.list_games(BOT_TOKEN) == []
+    assert len(manager.requests) == 2

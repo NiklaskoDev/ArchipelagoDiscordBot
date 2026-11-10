@@ -11,12 +11,14 @@ Discord language).
 
 | Command | Who | What |
 |---|---|---|
-| `/games` | everyone | The games that are not finished: state, number of worlds, players and goals. Running games first. |
-| `/game game:` | everyone | One game in detail: state, address, Archipelago version, planned start, progress, goals, every slot with its world, owner, checks and status, and a button that opens the game in the manager. |
+| `/games` | everyone | The games that are not finished: state, number of worlds, players and goals. Running games first. Linked users also get the private games their own manager account can see, in a second message only they see. |
+| `/game game:` | everyone | One game in detail: state, address, Archipelago version, planned start, progress, goals, every slot with its world, owner, checks and status, and a button that opens the game in the manager. A linked user can also open a private game their account sees; that reply is only theirs. |
 | `/signups` | everyone | The sign-up rounds that take entries, soonest deadline first. |
 
-These commands show what the bot's own manager account may see (see below), never more, and never a room password.
-Replies are public, except error messages, which only the person who ran the command sees.
+These commands show what the bot's own manager account may see (see below), never a room password. A linked user
+additionally sees the games their own manager account can see, and only they see them: the replies that contain such
+games are private, and the public list never does. Other replies are public, except error messages, which only the
+person who ran the command sees.
 
 ### Linking and game control
 
@@ -30,7 +32,7 @@ more. These replies are private (only you see them).
 | `/mydata` | everyone | Everything the bot stores about you, the alerts you turned on included. |
 | `/alerts` | linked users | Choose which direct messages the bot sends you (see below). All are off until you pick them. |
 | `/wake game:` | linked users | Wakes a sleeping game (players of the game, and managers). |
-| `/start`, `/stop`, `/restart game:` | linked users, organizer role if set | Starts, stops or restarts a game, as far as the manager allows you. The manager's answer is shown as it is, for example "This game opens at its planned time". |
+| `/start`, `/stop`, `/restart game:` | linked users, organizer role if set | Starts, stops or restarts a game, as far as the manager allows you. The manager's answer is shown as it is, for example "This game opens at its planned time". The `game:` suggestions of `/wake`, `/start`, `/stop` and `/restart` include your private games. |
 
 ### Server settings (`/setup`)
 
@@ -218,6 +220,9 @@ What the bot stores, in `DATA_DIR/bot.sqlite3`:
   and role the bot made for each game, the overview message and the Discord events it made.
 - For each game: how far its activity feed was read.
 - For each open sign-up round: which deadline reminders were already posted (server, round, deadline, lead time).
+
+Not stored: the games a linked person's account can see are kept in memory for up to a minute (for `/games` and the
+game suggestions) and are gone after a restart.
 
 `/mydata` shows a person everything stored about them. `/unlink` deletes it, takes the person out of the game roles
 and forgets their alerts. When the bot leaves a server, that server's data is deleted. The bot cannot revoke a token in the manager: after `/unlink`, do that under *API tokens*.

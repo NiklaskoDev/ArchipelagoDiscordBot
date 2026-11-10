@@ -186,3 +186,45 @@ def _wrapped(error: Exception):
     from discord import app_commands
 
     return app_commands.CommandInvokeError(SimpleNamespace(name="start"), error)
+
+
+# --- a private game (one the bot's own account does not see) -----------------------------------------------------------------
+@pytest.mark.parametrize("command", ["wake", "start", "stop", "restart"])
+async def test_a_private_game_is_controlled_with_the_users_token_and_answered_privately(bot, manager, command):
+    link(bot)
+    assert bot.cache.games == []  # the bot's own account does not see game 7
+    manager.add("POST", f"/api/games/7/{command}", game_json(7, "Hidden Gem", state="running", visibility="participants"))
+    interaction = asker(bot)
+    await run(bot, command, interaction)
+    [request] = manager.requests
+    assert request.headers["Authorization"] == f"Bearer {USER_TOKEN}"
+    assert interaction.response.defer_kwargs == {"ephemeral": True}
+    [message] = interaction.messages
+    assert message["ephemeral"] is True
+    assert (message["embed"].title, message["embed"].description) == ("Hidden Gem", "Running")
+
+
+async def test_a_private_game_the_manager_does_not_show_the_user_is_not_found(bot, manager):
+    link(bot)
+    manager.add("POST", "/api/games/7/wake", (404, {"detail": "Game not found"}))
+    with pytest.raises(UserFacingError) as error:
+        await run(bot, "wake", asker(bot))
+    assert error.value.message("en") == "That game was not found. Pick one from the list."
+
+
+async def test_a_private_game_without_a_link_gets_the_not_linked_error_before_any_defer(bot, manager):
+    interaction = asker(bot)
+    with pytest.raises(NotLinkedError):
+        await run(bot, "wake", interaction)
+    assert manager.requests == [] and not interaction.response.deferred
+
+
+async def test_start_of_a_private_game_still_needs_the_organizer_role_first(bot, manager):
+    link(bot)
+    bot.guild_settings.update(GUILD, organizer_role_id=ORGANIZER_ROLE)
+    manager.add("POST", "/api/games/7/start", game_json(7, "Hidden Gem"))
+    with pytest.raises(MissingRoleError):
+        await run(bot, "start", asker(bot, roles=[1]))
+    assert manager.requests == []
+    await run(bot, "start", asker(bot, roles=[ORGANIZER_ROLE]))
+    assert manager.requests[0].headers["Authorization"] == f"Bearer {USER_TOKEN}"

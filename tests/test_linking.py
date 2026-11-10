@@ -1,6 +1,6 @@
 import discord
 import pytest
-from fakes import USER_TOKEN, FakeInteraction, json_text
+from fakes import USER_TOKEN, FakeInteraction, game_json, json_text
 
 from apbot.cogs.linking import LinkingCog, LinkModal
 from apbot.errors import UserFacingError
@@ -243,3 +243,25 @@ async def test_someone_else_cannot_confirm_my_unlink(bot, manager):
     assert bot.links.get(1001) is not None
     view.stop()
     await task
+
+
+# --- the person's private games are forgotten when the link changes ------------------------------------------------------
+async def test_linking_again_forgets_the_kept_game_list(bot, manager):
+    accept(manager)
+    await submit(bot)
+    manager.add("GET", "/api/games", [game_json(1)])
+    await bot.my_games.games(1001, USER_TOKEN)
+    assert bot.my_games.cached(1001) is not None
+    await submit(bot)
+    assert bot.my_games.cached(1001) is None
+
+
+async def test_unlinking_forgets_the_kept_game_list(bot, manager):
+    accept(manager)
+    await submit(bot)
+    manager.add("GET", "/api/games", [game_json(1)])
+    await bot.my_games.games(1001, USER_TOKEN)
+    interaction, task = await start_unlink(bot)
+    await interaction.messages[0]["view"].children[0].callback(FakeInteraction(bot, user_id=1001))
+    await task
+    assert bot.my_games.cached(1001) is None

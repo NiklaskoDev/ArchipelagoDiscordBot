@@ -1,10 +1,11 @@
 import pytest
-from fakes import USER_TOKEN, FakeInteraction, game_json, slot_json
+from fakes import BOT_TOKEN, SITE_URL, USER_TOKEN, FakeInteraction, by_token, game_json, slot_json
 
 from apbot.autocomplete import (
     LOADING_VALUE,
     claimable_slot_choices,
     game_choices_mine,
+    game_choices_visible,
     is_loading_choice,
     item_choices,
     location_choices,
@@ -144,3 +145,92 @@ async def test_names_for_a_person_who_is_not_linked_or_when_the_manager_fails_ar
     link(bot)
     manager.add("POST", CLIENT, (404, {"detail": "No such slot"}))
     assert await item_choices(typing(bot, namespace), "") == []
+
+
+# --- game_choices_visible ------------------------------------------------------------------------------------------------
+async def two_views(bot, manager, *, user, public=None):
+    """The bot's account sees `public`; the linked person's token sees `user`."""
+    public = [game_json(1, "Friday Run")] if public is None else public
+    manager.add("GET", "/api/games", by_token({BOT_TOKEN: public, USER_TOKEN: user}))
+    manager.add("GET", "/api/auth/status", {"site_url": SITE_URL})
+    await bot.cache.refresh()
+    manager.requests.clear()
+
+
+def hidden(game_id=9, name="Hidden Gem", **extra):
+    return game_json(game_id, name, visibility="participants", **extra)
+
+
+async def test_an_unlinked_person_gets_the_public_games_as_before(bot, manager):
+    await two_views(bot, manager, user=[hidden()])
+    choices = await game_choices_visible(FakeInteraction(bot), "")
+    assert [(c.name, c.value) for c in choices] == [("Friday Run", "1")]
+    assert manager.requests == []
+
+
+async def test_a_linked_person_also_gets_their_private_games_marked_private(bot, manager):
+    link(bot)
+    await two_views(bot, manager, user=[game_json(1, "Friday Run"), hidden()])
+    choices = await game_choices_visible(FakeInteraction(bot), "")
+    assert [(c.name, c.value) for c in choices] == [("Hidden Gem — Private", "9"), ("Friday Run", "1")]
+    assert manager.requests[0].headers["Authorization"] == f"Bearer {USER_TOKEN}"
+    assert manager.requests[0].extensions["timeout"]["read"] == 2  # quick
+
+
+async def test_the_public_game_is_listed_once_even_though_both_accounts_see_it(bot, manager):
+    link(bot)
+    await two_views(bot, manager, user=[game_json(1, "Friday Run"), hidden()])
+    values = [c.value for c in await game_choices_visible(FakeInteraction(bot), "")]
+    assert sorted(values) == ["1", "9"]
+
+
+async def test_the_typed_text_narrows_private_games_too(bot, manager):
+    link(bot)
+    await two_views(bot, manager, user=[game_json(1, "Friday Run"), hidden()])
+    assert [c.value for c in await game_choices_visible(FakeInteraction(bot), "GEM")] == ["9"]
+    assert await game_choices_visible(FakeInteraction(bot), "nothing like it") == []
+
+
+async def test_the_suffix_follows_the_language_and_the_name_is_clipped_to_100_characters(bot, manager):
+    link(bot)
+    await two_views(bot, manager, user=[hidden(9, "n" * 150)], public=[])
+    [choice] = await game_choices_visible(FakeInteraction(bot, locale="de"), "")
+    assert choice.name.endswith(" — Privat") and len(choice.name) == 100
+
+
+async def test_the_french_and_dutch_suffix(bot, manager):
+    link(bot)
+    await two_views(bot, manager, user=[hidden()], public=[])
+    assert (await game_choices_visible(FakeInteraction(bot, locale="fr"), ""))[0].name == "Hidden Gem — Privée"
+    bot.my_games.forget(1001)
+    assert (await game_choices_visible(FakeInteraction(bot, locale="nl"), ""))[0].name == "Hidden Gem — Privé"
+
+
+async def test_a_finished_private_game_comes_after_the_listed_ones(bot, manager):
+    link(bot)
+    await two_views(bot, manager, user=[hidden(9, "Done One", finished_at=5.0, outcome="finished"), hidden(8, "Live One")], public=[])
+    assert [c.value for c in await game_choices_visible(FakeInteraction(bot), "")] == ["8", "9"]
+
+
+@pytest.mark.parametrize("answer", [(503, {"detail": "busy"}), (401, {"detail": "no"}), {"not": "a list"}])
+async def test_a_manager_that_cannot_answer_means_public_choices_only_never_an_error(bot, manager, answer):
+    link(bot)
+    await two_views(bot, manager, user=answer)
+    choices = await game_choices_visible(FakeInteraction(bot), "")
+    assert [(c.name, c.value) for c in choices] == [("Friday Run", "1")]
+
+
+async def test_when_the_manager_fails_later_the_kept_list_is_used(bot, manager):
+    link(bot)
+    await two_views(bot, manager, user=[game_json(1, "Friday Run"), hidden()])
+    await bot.my_games.games(1001, USER_TOKEN)
+    manager.add("GET", "/api/games", (503, {"detail": "busy"}))
+    assert "9" in [c.value for c in await game_choices_visible(FakeInteraction(bot), "")]
+
+
+async def test_a_broken_link_means_public_choices_only(bot, manager):
+    link(bot)
+    bot.links.mark_invalid(1001)
+    await two_views(bot, manager, user=[hidden()])
+    assert [c.value for c in await game_choices_visible(FakeInteraction(bot), "")] == ["1"]
+    assert manager.requests == []

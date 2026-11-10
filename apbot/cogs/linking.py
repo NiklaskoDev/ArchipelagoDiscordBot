@@ -105,6 +105,7 @@ class LinkingCog(commands.Cog):
             token[-TOKEN_HINT_LENGTH:],
             language_of(interaction.locale),
         )
+        self.bot.my_games.forget(interaction.user.id)  # another account may see other games
         await reply(interaction, embed=linked_embed(username, lang), ephemeral=True)
 
     @app_commands.command(name=locale_str("unlink"), description=locale_str("Remove the link to your manager account"))
@@ -118,6 +119,7 @@ class LinkingCog(commands.Cog):
             return
         self.bot.links.delete(interaction.user.id)  # the alert choices go with it
         self.bot.user_sync.forget(interaction.user.id)
+        self.bot.my_games.forget(interaction.user.id)
         self.bot.alerts.forget(interaction.user.id)
         await self.bot.relay.sync_roles(interaction.user.id, frozenset())  # no game roles for someone who is unlinked
         done = notice_embed(t("Unlinked. Revoke the token in the manager under API tokens as well.", lang), SUCCESS)

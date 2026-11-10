@@ -4,6 +4,8 @@ Versions follow `{major}.{minor}.{hotfix}[-prN]` — see `docs/ai/versioning.md`
 Sections per version: Added, Changed, Fixed, Removed, Security.
 
 ## [Unreleased]
+### Added
+- `/games` and `/game` also show linked users the private games their own manager account can see, and the game suggestions of `/game`, `/wake`, `/start`, `/stop` and `/restart` include them; only that person sees them.
 
 ## [0.1.0] - 2026-11-10
 ### Added
