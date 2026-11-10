@@ -1,12 +1,13 @@
 import asyncio
 import logging
+import sqlite3
 from types import SimpleNamespace
 
 import discord
 import httpx
 import pytest
 from discord import app_commands
-from fakes import FakeInteraction, game_json, make_config
+from fakes import ENCRYPTION_KEY, FakeInteraction, game_json, make_config
 
 import apbot.__main__ as entry
 from apbot.bot import ApBot
@@ -19,6 +20,9 @@ from apbot.manager.errors import (
     TooManyRequests,
 )
 from apbot.services.manager_watch import StartupFailure
+
+
+COMMAND_NAMES = {"games", "game", "signups", "wake", "start", "stop", "restart", "link", "unlink", "mydata", "setup"}
 
 
 def invoke_error(original: Exception) -> app_commands.CommandInvokeError:
@@ -114,6 +118,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setenv("DISCORD_TOKEN", "discord-token-value")
     monkeypatch.setenv("MANAGER_URL", "http://manager:8080")
     monkeypatch.setenv("MANAGER_API_TOKEN", "apm_valueForTests")
+    monkeypatch.setenv("BOT_ENCRYPTION_KEY", ENCRYPTION_KEY)
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.setattr(entry, "setup_logging", lambda level: None)
 
@@ -169,7 +174,7 @@ async def test_bot_starts_without_a_reachable_manager(no_discord, manager):
     await no_discord.setup_hook()
     try:
         assert no_discord.exit_code == 0
-        assert {command.name for command in no_discord.tree.get_commands()} == {"games", "game", "signups"}
+        assert {command.name for command in no_discord.tree.get_commands()} == COMMAND_NAMES
     finally:
         await no_discord.close()
 
@@ -232,7 +237,7 @@ async def test_commands_go_to_the_development_server_only_when_one_is_set(tmp_pa
     await bot.setup_hook()
     await bot.close()
     assert [call["guild"].id for call in calls] == [424242]
-    assert {c.name for c in bot.tree.get_commands(guild=discord.Object(424242))} == {"games", "game", "signups"}
+    assert {c.name for c in bot.tree.get_commands(guild=discord.Object(424242))} == COMMAND_NAMES
 
 
 async def test_background_tasks_refresh_the_games_and_write_the_heartbeat_once_connected(tmp_path, manager, monkeypatch):
@@ -256,3 +261,38 @@ async def test_no_heartbeat_while_the_gateway_is_not_connected(no_discord, manag
     await let_tasks_run()
     await no_discord.close()
     assert not (tmp_path / "heartbeat").exists()
+
+
+# --- the database and the keys -----------------------------------------------------------------------------------------
+def test_the_bot_opens_and_migrates_its_database_in_the_data_folder(bot, tmp_path):
+    assert (tmp_path / "bot.sqlite3").exists()
+    assert [r["version"] for r in bot.db.query_all("SELECT version FROM schema_migrations")] == [1]
+
+
+async def test_closing_the_bot_closes_the_database(no_discord, manager):
+    manager.add("GET", "/api/health", HEALTH)
+    manager.add("GET", "/api/auth/status", {"user": {"id": 2, "username": "bot", "role": "user"}, "site_url": None})
+    await no_discord.setup_hook()
+    await no_discord.close()
+    with pytest.raises(sqlite3.ProgrammingError):
+        no_discord.db.query_all("SELECT 1")
+
+
+def test_main_with_a_missing_encryption_key_names_it_and_exits_with_1(monkeypatch, env, capsys):
+    monkeypatch.delenv("BOT_ENCRYPTION_KEY")
+    assert entry.main() == 1
+    assert "BOT_ENCRYPTION_KEY" in capsys.readouterr().err
+
+
+def test_main_with_an_unusable_data_folder_exits_with_1_and_names_it(monkeypatch, env, tmp_path, caplog):
+    blocker = tmp_path / "file-not-folder"
+    blocker.write_text("x", encoding="utf-8")
+    monkeypatch.setenv("DATA_DIR", str(blocker / "data"))
+    with caplog.at_level(logging.ERROR, logger="apbot"):
+        assert entry.main() == 1
+    assert "Cannot use the data folder" in caplog.text
+
+
+def test_main_with_a_database_that_is_not_one_exits_with_1(monkeypatch, env, tmp_path):
+    (tmp_path / "bot.sqlite3").write_bytes(b"this is not a database file" * 100)
+    assert entry.main() == 1

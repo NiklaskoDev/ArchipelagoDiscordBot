@@ -3,6 +3,7 @@ bot's API token."""
 
 import logging
 import os
+import sqlite3
 import sys
 
 import discord
@@ -30,7 +31,11 @@ def main() -> int:
     discord.VoiceClient.warn_nacl = False
     discord.VoiceClient.warn_dave = False
 
-    bot = ApBot(config)
+    try:
+        bot = ApBot(config)
+    except (OSError, sqlite3.Error) as exc:
+        log.error("Cannot use the data folder %s for the database: %s", config.data_dir, exc)
+        return EXIT_BAD_SETTINGS
     try:
         bot.run(config.discord_token, log_handler=None)  # run() also ends the bot on SIGINT and SIGTERM
     except StartupFailure as exc:

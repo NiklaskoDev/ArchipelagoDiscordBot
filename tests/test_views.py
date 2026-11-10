@@ -97,3 +97,13 @@ def test_open_signups_shows_open_rounds_soonest_deadline_first_and_no_deadline_l
         ]
     )
     assert [s.name for s in open_signups(rounds)] == ["soon", "late", "no deadline"]
+
+
+def test_views_hold_exactly_the_whitelisted_fields():
+    """Adding a field to a public view has to be a deliberate change: this list is the whitelist."""
+    summary = {
+        "id", "name", "state", "world_count", "player_count", "claimed_count", "goal_count", "address", "tls",
+        "ap_version", "start_at", "created_at", "finished_at", "outcome",
+    }
+    assert {f.name for f in dataclasses.fields(GameSummary)} == summary
+    assert {f.name for f in dataclasses.fields(GameDetail)} == summary | {"slots", "checked", "total"}

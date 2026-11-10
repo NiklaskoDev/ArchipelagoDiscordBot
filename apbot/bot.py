@@ -8,9 +8,16 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+from apbot.access import Access
 from apbot.cogs.games import GamesCog
+from apbot.cogs.linking import LinkingCog
+from apbot.cogs.setup import SetupCog
 from apbot.cogs.signups import SignupsCog
 from apbot.config import Config
+from apbot.crypto import TokenCipher
+from apbot.db.database import DATABASE_FILE, Database
+from apbot.db.guilds import GuildSettingsStore
+from apbot.db.links import LinkStore
 from apbot.errors import user_message
 from apbot.heartbeat import HEARTBEAT_INTERVAL, Heartbeat
 from apbot.i18n import BotTranslator, language_of, t
@@ -34,6 +41,12 @@ class ApBot(commands.Bot):
         )
         self.config = config
         self.manager = manager or ManagerClient(config.manager_url)
+        self.db = Database(config.data_dir / DATABASE_FILE)
+        self.db.migrate()
+        self.links = LinkStore(self.db)
+        self.guild_settings = GuildSettingsStore(self.db)
+        self.cipher = TokenCipher(config.encryption_keys)
+        self.access = Access(self.links, self.guild_settings, self.cipher)
         self.cache = GameCache(self.manager, config.manager_api_token)
         self.exit_code = 0
         self._watch = ManagerWatch(self.manager, config.manager_api_token, self.cache)
@@ -51,6 +64,8 @@ class ApBot(commands.Bot):
         await self.tree.set_translator(BotTranslator())
         await self.add_cog(GamesCog(self))
         await self.add_cog(SignupsCog(self))
+        await self.add_cog(LinkingCog(self))
+        await self.add_cog(SetupCog(self))
         await self._sync_commands()
         for task in self._periodic:
             task.start()
@@ -81,6 +96,11 @@ class ApBot(commands.Bot):
             await task.stop()
         await self.manager.aclose()
         await super().close()
+        self.db.close()
+
+    async def on_guild_remove(self, guild: discord.Guild) -> None:
+        """The bot left (or was removed from) a server: forget what was configured for it."""
+        self.guild_settings.delete(guild.id)
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
         original = getattr(error, "original", error)

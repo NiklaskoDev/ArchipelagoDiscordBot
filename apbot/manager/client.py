@@ -26,6 +26,7 @@ from apbot.manager.errors import (
 log = logging.getLogger(__name__)
 
 TIMEOUT = httpx.Timeout(10, connect=5)
+CONTROL_TIMEOUT = httpx.Timeout(60, connect=5)  # stopping a game waits for its server to save and exit (up to ~25 s)
 RETRY_DELAYS = (0.5, 1.0, 2.0)  # seconds before each retry of a read
 MAX_DETAIL_LENGTH = 300
 UNAVAILABLE_STATUSES = frozenset({502, 503, 504})
@@ -78,10 +79,14 @@ class ManagerClient:
     async def aclose(self) -> None:
         await self._http.aclose()
 
-    async def _send(self, method: str, path: str, token: str | None) -> Any:
+    async def _send(
+        self, method: str, path: str, token: str | None, *, timeout: httpx.Timeout | None = None
+    ) -> Any:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
         try:
-            response = await self._http.request(method, path, headers=headers)
+            response = await self._http.request(
+                method, path, headers=headers, timeout=timeout if timeout is not None else httpx.USE_CLIENT_DEFAULT
+            )
         except httpx.HTTPError as exc:
             # str(exc) can carry the request URL; the class name is enough to tell timeouts from refused connections.
             raise ManagerUnavailable(None, f"The manager could not be reached ({type(exc).__name__})") from None
@@ -102,6 +107,10 @@ class ManagerClient:
                 await self._sleep(delay)
         return await self._send("GET", path, token)
 
+    async def _post(self, path: str, token: str, *, timeout: httpx.Timeout | None = None) -> Any:
+        """A change without a body. Never retried: the first try may have worked even when no answer came back."""
+        return await self._send("POST", path, token, timeout=timeout)
+
     async def health(self) -> dict:
         return await self._get("/api/health", None)
 
@@ -116,3 +125,15 @@ class ManagerClient:
 
     async def list_signups(self, token: str) -> list[dict]:
         return await self._get("/api/signups", token)
+
+    async def wake(self, token: str, game_id: int) -> dict:
+        return await self._post(f"/api/games/{int(game_id)}/wake", token, timeout=CONTROL_TIMEOUT)
+
+    async def start(self, token: str, game_id: int) -> dict:
+        return await self._post(f"/api/games/{int(game_id)}/start", token, timeout=CONTROL_TIMEOUT)
+
+    async def stop(self, token: str, game_id: int) -> dict:
+        return await self._post(f"/api/games/{int(game_id)}/stop", token, timeout=CONTROL_TIMEOUT)
+
+    async def restart(self, token: str, game_id: int) -> dict:
+        return await self._post(f"/api/games/{int(game_id)}/restart", token, timeout=CONTROL_TIMEOUT)

@@ -1,7 +1,10 @@
 """Stand-ins for the manager (httpx.MockTransport) and for Discord (small recording objects). No real network."""
 
 import json
+
+import discord
 import httpx
+from cryptography.fernet import Fernet
 
 from apbot.config import Config
 from apbot.manager.client import ManagerClient
@@ -9,6 +12,7 @@ from apbot.manager.client import ManagerClient
 BOT_TOKEN = "apm_botTokenForTests"
 USER_TOKEN = "apm_userTokenForTests"
 SITE_URL = "https://manager.example"
+ENCRYPTION_KEY = Fernet.generate_key().decode()  # a fresh key per test run; nothing is ever encrypted for real
 
 
 def make_config(tmp_path, **overrides) -> Config:
@@ -16,6 +20,7 @@ def make_config(tmp_path, **overrides) -> Config:
         "discord_token": "discord-token-for-tests",
         "manager_url": "http://manager.test:8080",
         "manager_api_token": BOT_TOKEN,
+        "encryption_keys": (ENCRYPTION_KEY,),
         "data_dir": tmp_path,
         "log_level": "INFO",
         "dev_guild_id": None,
@@ -116,17 +121,29 @@ class FakeResponse:
     def __init__(self):
         self.done = False
         self.sent: list[dict] = []
+        self.edited: list[dict] = []
+        self.modals: list = []
         self.deferred = False
+        self.defer_kwargs: dict = {}
 
     def is_done(self) -> bool:
         return self.done
 
     async def defer(self, **kwargs) -> None:
         self.done = self.deferred = True
+        self.defer_kwargs = kwargs
 
     async def send_message(self, **kwargs) -> None:
         self.done = True
         self.sent.append(kwargs)
+
+    async def edit_message(self, **kwargs) -> None:
+        self.done = True
+        self.edited.append(kwargs)
+
+    async def send_modal(self, modal) -> None:
+        self.done = True
+        self.modals.append(modal)
 
 
 class FakeFollowup:
@@ -137,16 +154,69 @@ class FakeFollowup:
         self.sent.append(kwargs)
 
 
+class FakeUser:
+    """A server member: `roles` are the ids of the roles they have."""
+
+    def __init__(self, user_id: int = 1001, roles=()):
+        self.id = user_id
+        self._roles = set(roles)
+
+    def get_role(self, role_id: int):
+        return object() if role_id in self._roles else None
+
+
+class FakeGuild:
+    def __init__(self, guild_id: int = 5000):
+        self.id = guild_id
+        self.me = FakeUser(1)
+
+
+class FakeRole:
+    def __init__(self, role_id: int, *, default: bool = False):
+        self.id = role_id
+        self.mention = f"<@&{role_id}>"
+        self._default = default
+
+    def is_default(self) -> bool:
+        return self._default
+
+
+class FakeChannel:
+    def __init__(self, channel_id: int, permissions: discord.Permissions):
+        self.id = channel_id
+        self.mention = f"<#{channel_id}>"
+        self._permissions = permissions
+
+    def permissions_for(self, member) -> discord.Permissions:
+        return self._permissions
+
+
 class FakeInteraction:
-    def __init__(self, bot=None, locale: str = "en-US"):
+    def __init__(
+        self,
+        bot=None,
+        locale: str = "en-US",
+        *,
+        user_id: int = 1001,
+        roles=(),
+        guild_id: int | None = None,
+        manage_guild: bool = False,
+    ):
         self.client = bot
         self.locale = locale
+        self.user = FakeUser(user_id, roles)
+        self.guild = FakeGuild(guild_id) if guild_id is not None else None
+        self.permissions = discord.Permissions(manage_guild=manage_guild)
         self.response = FakeResponse()
         self.followup = FakeFollowup()
         self.deleted_original = False
+        self.original_edits: list[dict] = []
 
     async def delete_original_response(self) -> None:
         self.deleted_original = True
+
+    async def edit_original_response(self, **kwargs) -> None:
+        self.original_edits.append(kwargs)
 
     @property
     def messages(self) -> list[dict]:

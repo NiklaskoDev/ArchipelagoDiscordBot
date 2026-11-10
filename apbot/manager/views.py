@@ -35,7 +35,6 @@ class GameSummary:
     player_count: int
     claimed_count: int
     goal_count: int
-    visibility: str
     address: str | None  # host:port, as players type it
     tls: bool
     ap_version: str | None
@@ -105,7 +104,6 @@ def _summary_fields(raw: Mapping) -> dict[str, Any]:
         "player_count": _int(raw.get("player_count")),
         "claimed_count": _int(raw.get("claimed_count")),
         "goal_count": _int(raw.get("goal_count")),
-        "visibility": _text(raw.get("visibility")) or "all",
         "address": _text(raw.get("address")),
         "tls": bool(raw.get("tls")),
         "ap_version": _text(raw.get("ap_version")),

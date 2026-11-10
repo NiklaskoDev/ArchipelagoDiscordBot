@@ -11,6 +11,7 @@ from apbot.i18n import de, fr, nl
 
 LANGUAGES = ("en", "de", "fr", "nl")
 DEFAULT_LANGUAGE = "en"
+LANGUAGE_NAMES = {"en": "English", "de": "Deutsch", "fr": "Français", "nl": "Nederlands"}  # each in its own language
 
 _CATALOGS = {"de": de, "fr": fr, "nl": nl}
 

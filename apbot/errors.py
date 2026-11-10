@@ -1,6 +1,6 @@
 """Errors that end up in front of a person, in their language."""
 
-from apbot.i18n import t
+from apbot.i18n import t, translatable
 from apbot.manager.errors import ManagerError, ManagerUnavailable, TokenInvalid, TooManyRequests
 from apbot.ui.format import safe_text
 
@@ -17,6 +17,27 @@ class UserFacingError(Exception):
 
     def message(self, lang: str) -> str:
         return t(self.key, lang, **self.values)
+
+
+class NotLinkedError(UserFacingError):
+    """The person has not linked a manager account, so there is no token to act with."""
+
+    def __init__(self):
+        super().__init__(translatable("Link your manager account first with /link"))
+
+
+class MissingRoleError(UserFacingError):
+    """A command is limited to a role (or to Manage Server) that the person does not have. `role_id` is the configured
+    role, None when only the Manage Server permission counts."""
+
+    def __init__(self, role_id: int | None, *, manage_server_counts: bool):
+        if role_id is None:
+            super().__init__(translatable("You need the Manage Server permission to do this"))
+        elif manage_server_counts:
+            key = translatable("You need the role {role} or the Manage Server permission to do this")
+            super().__init__(key, role=f"<@&{role_id}>")
+        else:
+            super().__init__(translatable("You need the role {role} to do this"), role=f"<@&{role_id}>")
 
 
 def user_message(error: BaseException, lang: str) -> str | None:

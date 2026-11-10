@@ -1,0 +1,95 @@
+"""Who the bot acts as, and who may use a command.
+
+Public views use the bot's own token (see the cogs). Everything else acts as the person who asked, with the manager
+token they linked: the manager decides what that person may do, the bot never widens it. On top of that a server can
+limit commands to a Discord role, which this module checks.
+"""
+
+import logging
+from collections.abc import Awaitable, Callable
+from typing import Literal, TypeVar
+
+import discord
+
+from apbot.crypto import TokenCipher, TokenUndecryptable
+from apbot.db.guilds import GuildSettingsStore
+from apbot.db.links import STATUS_ACTIVE, LinkStore
+from apbot.errors import MissingRoleError, NotLinkedError, UserFacingError
+from apbot.i18n import language_of
+from apbot.manager.errors import ReadOnlyToken, TokenInvalid
+
+log = logging.getLogger(__name__)
+
+RoleKind = Literal["organizer", "admin"]
+T = TypeVar("T")
+
+
+class Access:
+    def __init__(self, links: LinkStore, guilds: GuildSettingsStore, cipher: TokenCipher):
+        self._links = links
+        self._guilds = guilds
+        self._cipher = cipher
+
+    def user_token(self, interaction: discord.Interaction) -> str:
+        """The manager token of the person who caused this interaction (a command or a button: whoever clicked, never
+        someone named in a custom_id). Raises NotLinkedError, or UserFacingError when the link needs to be made again."""
+        discord_id = interaction.user.id
+        link = self._links.get(discord_id)
+        if link is None:
+            raise NotLinkedError
+        language = language_of(interaction.locale)
+        if link.locale != language:
+            self._links.set_locale(discord_id, language)  # direct messages later follow the language they use now
+        if link.status != STATUS_ACTIVE or link.token_ciphertext is None:
+            raise _link_again()
+        try:
+            token = self._cipher.decrypt(link.token_ciphertext)
+            if self._cipher.needs_rotation(link.token_ciphertext):
+                self._links.replace_ciphertext(discord_id, self._cipher.encrypt(token))
+        except TokenUndecryptable:
+            log.error("A stored manager token cannot be decrypted; BOT_ENCRYPTION_KEY may have changed")
+            self.on_token_invalid(discord_id)
+            raise _link_again() from None
+        return token
+
+    async def run(self, interaction: discord.Interaction, call: Callable[[str], Awaitable[T]]) -> T:
+        """Calls the manager as the person: `call` gets their token. A token the manager refuses marks the link invalid;
+        a read-only token is explained. Other manager errors pass through to the bot's error handler."""
+        token = self.user_token(interaction)
+        try:
+            return await call(token)
+        except TokenInvalid:
+            self.on_token_invalid(interaction.user.id)
+            raise _link_again() from None
+        except ReadOnlyToken:
+            raise UserFacingError(
+                "Your linked token can only read. Link a token with *Read and change* access"
+            ) from None
+
+    def on_token_invalid(self, discord_id: int) -> None:
+        self._links.mark_invalid(discord_id)
+
+    def require_role(self, interaction: discord.Interaction, kind: RoleKind) -> None:
+        """Raises MissingRoleError unless the person may use a command limited to `kind`.
+
+        organizer: needs the organizer role, but only when the server has set one.
+        admin: Manage Server always counts; the admin role does too when the server has set one."""
+        guild = interaction.guild
+        if guild is None:
+            raise UserFacingError("This command only works in a server")
+        settings = self._guilds.get(guild.id)
+        if kind == "admin":
+            if interaction.permissions.manage_guild:
+                return
+            role_id = settings.admin_role_id
+        else:
+            role_id = settings.organizer_role_id
+            if role_id is None:
+                return
+        if role_id is not None and interaction.user.get_role(role_id) is not None:
+            return
+        raise MissingRoleError(role_id, manage_server_counts=kind == "admin")
+
+
+def _link_again() -> UserFacingError:
+    return UserFacingError("Your manager token no longer works. Make a new one and run /link again")

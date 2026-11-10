@@ -7,8 +7,11 @@ from collections.abc import Sequence
 
 import discord
 
-from apbot.i18n import t, translatable
+from apbot.db.guilds import GuildSettings
+from apbot.db.links import STATUS_ACTIVE, UserLink
+from apbot.i18n import LANGUAGE_NAMES, t, translatable
 from apbot.manager.views import GameDetail, GameSummary, SignupSummary, SlotView
+from apbot.services.manager_watch import MIN_MANAGER_VERSION, ManagerReport, version_at_least
 from apbot.ui.format import chunk_lines, escape, fit_lines, progress, safe_text, ts
 from apbot.ui.style import (
     ACCENT,
@@ -19,8 +22,11 @@ from apbot.ui.style import (
     FIELDS,
     LIST_LINES,
     NAME_LIMIT,
+    ELLIPSIS,
     SEPARATOR,
     STATE_COLOURS,
+    SUCCESS,
+    WARNING,
 )
 
 TITLE_LIMIT = 100  # escaping can double a name, and Discord allows 256 characters in a title
@@ -135,7 +141,7 @@ def game_detail_embeds(game: GameDetail, lang: str) -> list[discord.Embed]:
         colour=STATE_COLOURS.get(game.state, ACCENT),
     )
     if game.address:
-        address = escape(game.address)
+        address = safe_text(game.address, NAME_LIMIT)
         if game.tls:
             address += SEPARATOR + t("encrypted (wss)", lang)
         info.add_field(name=t("Address", lang), value=address)
@@ -183,3 +189,94 @@ def signups_embed(signups: Sequence[SignupSummary], lang: str) -> discord.Embed:
 def error_embed(message: str) -> discord.Embed:
     """`message` is already in the reader's language: what happened and what to do about it."""
     return discord.Embed(description=message, colour=ERROR)
+
+
+def notice_embed(message: str, colour: discord.Colour = ACCENT) -> discord.Embed:
+    """`message` is already in the reader's language."""
+    return discord.Embed(description=message, colour=colour)
+
+
+def game_state_embed(game: GameSummary, lang: str) -> discord.Embed:
+    """What a game is doing right now, as answered after waking, starting, stopping or restarting it."""
+    return discord.Embed(
+        title=safe_text(game.name, TITLE_LIMIT),
+        description=_label(_STATE_LABELS, game.state, lang),
+        colour=STATE_COLOURS.get(game.state, ACCENT),
+    )
+
+
+def linked_embed(manager_username: str, lang: str) -> discord.Embed:
+    return notice_embed(t("Linked as **{username}**", lang, username=safe_text(manager_username, NAME_LIMIT)), SUCCESS)
+
+
+def link_status_embed(link: UserLink | None, lang: str) -> discord.Embed:
+    """Everything the bot stores about one person (/mydata). The token itself is never part of it, only its last
+    characters."""
+    title = t("Your stored data", lang)
+    if link is None:
+        description = t("No manager account is linked to your Discord account. Nothing else is stored about you.", lang)
+        return discord.Embed(title=title, description=description, colour=ACCENT)
+    embed = discord.Embed(title=title, colour=ACCENT)
+    embed.add_field(name=t("Manager account", lang), value=safe_text(link.manager_username, NAME_LIMIT))
+    if link.token_hint:
+        embed.add_field(name=t("Token", lang), value=f"{ELLIPSIS}{escape(link.token_hint)}")
+    status = t("Active", lang) if link.status == STATUS_ACTIVE else t("Not working. Run /link again.", lang)
+    embed.add_field(name=t("Status", lang), value=status)
+    embed.add_field(name=t("Language", lang), value=LANGUAGE_NAMES.get(link.locale, link.locale))
+    embed.add_field(name=t("Linked", lang), value=ts(link.linked_at, "f"))
+    embed.add_field(name=t("Last checked", lang), value=ts(link.checked_at, "f"))
+    return embed
+
+
+def _channel_or_unset(channel_id: int | None, lang: str) -> str:
+    return f"<#{channel_id}>" if channel_id else t("Not set", lang)
+
+
+def _role_or_unset(role_id: int | None, lang: str) -> str:
+    return f"<@&{role_id}>" if role_id else t("Not set", lang)
+
+
+def settings_embed(settings: GuildSettings, lang: str) -> discord.Embed:
+    embed = discord.Embed(title=t("Server settings", lang), colour=ACCENT)
+    embed.add_field(name=t("Language", lang), value=LANGUAGE_NAMES.get(settings.language, settings.language))
+    embed.add_field(name=t("Time zone", lang), value=escape(settings.timezone))
+    embed.add_field(name=t("Games channel", lang), value=_channel_or_unset(settings.games_channel_id, lang))
+    embed.add_field(name=t("Sign-ups channel", lang), value=_channel_or_unset(settings.signups_channel_id, lang))
+    embed.add_field(name=t("Overview channel", lang), value=_channel_or_unset(settings.overview_channel_id, lang))
+    embed.add_field(name=t("Organizer role", lang), value=_role_or_unset(settings.organizer_role_id, lang))
+    embed.add_field(name=t("Admin role", lang), value=_role_or_unset(settings.admin_role_id, lang))
+    return embed
+
+
+def manager_check_embed(report: ManagerReport | None, lang: str) -> discord.Embed:
+    """The result of asking the manager about itself and about the bot's account; None when it did not answer."""
+    embed = discord.Embed(title=t("Manager", lang))
+    if report is None:
+        embed.colour = ERROR
+        embed.add_field(name=t("Reachable", lang), value=t("No. The manager did not answer.", lang), inline=False)
+        return embed
+    problem = False
+    embed.add_field(name=t("Reachable", lang), value=t("Yes", lang), inline=False)
+    if version_at_least(report.version, MIN_MANAGER_VERSION):
+        version = safe_text(report.version, NAME_LIMIT)
+    else:
+        problem = True
+        shown = safe_text(report.version, NAME_LIMIT) if report.version else t("Unknown", lang)
+        version = t("{version}. The bot needs {minimum} or newer.", lang, version=shown, minimum=MIN_MANAGER_VERSION)
+    embed.add_field(name=t("Version", lang), value=version, inline=False)
+    embed.add_field(name=t("Ready", lang), value=t("Yes", lang) if report.ready else t("No", lang), inline=False)
+    if report.username is None:
+        embed.colour = ERROR
+        account = t("Not accepted. Check MANAGER_API_TOKEN.", lang)
+    else:
+        account = f"{safe_text(report.username, NAME_LIMIT)} ({safe_text(report.role or '?', NAME_LIMIT)})"
+        if report.role != "user":
+            problem = True
+            warning = t("The bot account should be a plain user so private games never show up in public lists.", lang)
+            account = "\n".join((account, warning))
+    embed.add_field(name=t("Bot account", lang), value=account, inline=False)
+    web_address = escape(report.site_url) if report.site_url else t("Not set in the manager", lang)
+    embed.add_field(name=t("Web address", lang), value=web_address, inline=False)
+    if embed.colour is None:
+        embed.colour = WARNING if problem else SUCCESS
+    return embed

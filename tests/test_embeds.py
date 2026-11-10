@@ -88,6 +88,19 @@ def test_tls_game_says_encrypted():
     assert "encrypted" not in json_text(plain)
 
 
+def test_long_address_is_cut_and_keeps_the_encrypted_note():
+    info = game_detail_embeds(detail(address="h" * 300 + ":38281", tls=True), "en")[0]
+    value = info.fields[0].value
+    assert value.startswith("h" * 59 + "…")
+    assert value.endswith("encrypted (wss)")
+    assert len(value) < 100
+
+
+def test_address_is_escaped():
+    info = game_detail_embeds(detail(address="*host*:38281"), "en")[0]
+    assert info.fields[0].value == r"\*host\*:38281"
+
+
 def test_game_without_address_or_planned_start_has_no_such_field():
     info = game_detail_embeds(detail(address=None, start=None), "en")[0]
     names = [f.name for f in info.fields]

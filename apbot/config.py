@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from apbot.crypto import TokenCipher
+
 MANAGER_TOKEN_PATTERN = re.compile(r"^apm_[A-Za-z0-9_-]+$")
 LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
 DEFAULT_DATA_DIR = "/data"
@@ -27,6 +29,7 @@ class Config:
     discord_token: str
     manager_url: str
     manager_api_token: str
+    encryption_keys: tuple[str, ...]  # first one encrypts, all decrypt
     data_dir: Path
     log_level: str
     dev_guild_id: int | None
@@ -44,12 +47,29 @@ def _required(env: Mapping[str, str], name: str) -> str:
 
 
 def _manager_url(raw: str) -> str:
-    parts = urlsplit(raw)
+    try:
+        parts = urlsplit(raw)
+        parts.port  # noqa: B018 - reading it is the check: a malformed port raises ValueError
+    except ValueError:
+        raise ConfigError("MANAGER_URL", "must look like http://host:port or https://host") from None
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise ConfigError("MANAGER_URL", "must look like http://host:port or https://host")
     if parts.path not in ("", "/") or parts.query or parts.fragment or parts.username or parts.password:
         raise ConfigError("MANAGER_URL", "must be an address without a path, query or credentials")
     return raw.rstrip("/")
+
+
+def _encryption_keys(raw: str) -> tuple[str, ...]:
+    keys = tuple(key.strip() for key in raw.split(",") if key.strip())
+    if not keys:
+        raise ConfigError("BOT_ENCRYPTION_KEY", "is required but not set")
+    try:
+        TokenCipher(keys)
+    except ValueError:
+        raise ConfigError(
+            "BOT_ENCRYPTION_KEY", "must be one or more Fernet keys separated by commas (see .env.example)"
+        ) from None
+    return keys
 
 
 def _dev_guild_id(raw: str) -> int | None:
@@ -68,6 +88,8 @@ def load_config(env: Mapping[str, str]) -> Config:
     if not MANAGER_TOKEN_PATTERN.match(manager_token):
         raise ConfigError("MANAGER_API_TOKEN", "must be a manager API token (it starts with apm_)")
 
+    encryption_keys = _encryption_keys(env.get("BOT_ENCRYPTION_KEY", ""))
+
     log_level = env.get("LOG_LEVEL", "").strip().upper() or "INFO"
     if log_level not in LOG_LEVELS:
         raise ConfigError("LOG_LEVEL", f"must be one of {', '.join(LOG_LEVELS)}")
@@ -76,6 +98,7 @@ def load_config(env: Mapping[str, str]) -> Config:
         discord_token=discord_token,
         manager_url=manager_url,
         manager_api_token=manager_token,
+        encryption_keys=encryption_keys,
         data_dir=Path(env.get("DATA_DIR", "").strip() or DEFAULT_DATA_DIR),
         log_level=log_level,
         dev_guild_id=_dev_guild_id(env.get("DISCORD_DEV_GUILD_ID", "").strip()),

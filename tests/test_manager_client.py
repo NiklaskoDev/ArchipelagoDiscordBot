@@ -110,3 +110,61 @@ async def test_answer_that_is_not_json_is_unavailable(manager: FakeManager):
     manager.add("GET", "/api/games", httpx.Response(200, text="<html>proxy error</html>"))
     with pytest.raises(ManagerUnavailable):
         await manager.client.list_games(BOT_TOKEN)
+
+
+# --- changes (POST) ----------------------------------------------------------------------------------------------------
+@pytest.mark.parametrize("action", ["wake", "start", "stop", "restart"])
+async def test_game_control_posts_to_the_games_endpoint_with_the_token_in_the_header(manager: FakeManager, action):
+    manager.add("POST", f"/api/games/7/{action}", {"id": 7, "state": "running"})
+    assert await getattr(manager.client, action)(BOT_TOKEN, 7) == {"id": 7, "state": "running"}
+    [request] = manager.requests
+    assert (request.method, request.url.path) == ("POST", f"/api/games/7/{action}")
+    assert request.headers["Authorization"] == f"Bearer {BOT_TOKEN}"
+    assert BOT_TOKEN not in str(request.url)
+    assert request.content == b""
+
+
+async def test_game_control_allows_a_server_that_takes_time_to_stop(manager: FakeManager):
+    manager.add("POST", "/api/games/7/stop", {"id": 7})
+    manager.add("GET", "/api/games", [])
+    await manager.client.stop(BOT_TOKEN, 7)
+    await manager.client.list_games(BOT_TOKEN)
+    stop, read = manager.requests
+    assert stop.extensions["timeout"]["read"] == 60
+    assert read.extensions["timeout"]["read"] == 10
+
+
+@pytest.mark.parametrize("status", [502, 503, 504, 500])
+async def test_a_change_is_not_retried_when_the_manager_is_unavailable(manager: FakeManager, status):
+    manager.add("POST", "/api/games/7/start", (status, {"detail": "busy"}), {"id": 7})
+    with pytest.raises(ManagerUnavailable):
+        await manager.client.start(BOT_TOKEN, 7)
+    assert len(manager.requests) == 1
+    assert manager.sleeps == []
+
+
+@pytest.mark.parametrize("failure", [httpx.ConnectError("refused"), httpx.ReadTimeout("slow")])
+async def test_a_change_is_not_retried_after_a_network_failure(manager: FakeManager, failure):
+    manager.add("POST", "/api/games/7/restart", failure, {"id": 7})
+    with pytest.raises(ManagerUnavailable) as raised:
+        await manager.client.restart(BOT_TOKEN, 7)
+    assert len(manager.requests) == 1
+    assert BOT_TOKEN not in str(raised.value)
+
+
+async def test_a_change_keeps_the_409_detail_and_maps_the_other_errors(manager: FakeManager):
+    manager.add("POST", "/api/games/7/start", (409, {"detail": "The game is already running"}))
+    with pytest.raises(Conflict) as raised:
+        await manager.client.start(BOT_TOKEN, 7)
+    assert raised.value.detail == "The game is already running"
+    manager.add("POST", "/api/games/7/start", (403, {"detail": "This API token can only read"}))
+    with pytest.raises(ReadOnlyToken):
+        await manager.client.start(BOT_TOKEN, 7)
+    manager.add("POST", "/api/games/7/start", (401, {"detail": "no"}))
+    with pytest.raises(TokenInvalid):
+        await manager.client.start(BOT_TOKEN, 7)
+
+
+async def test_the_game_id_is_a_number_in_the_path(manager: FakeManager):
+    with pytest.raises(ValueError):
+        await manager.client.start(BOT_TOKEN, "7/../../tokens")
