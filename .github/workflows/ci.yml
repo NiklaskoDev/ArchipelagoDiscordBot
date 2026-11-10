@@ -1,0 +1,111 @@
+name: CI
+
+# Lint, test, build. Detects the stack from files in the repo root.
+# Delete the blocks you do not need; adjust commands to match CLAUDE.md.
+# Any other stack (C/C++, mobile, game engines, ...): put the commands in scripts/ci.sh.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fail if no known stack is present
+        if: hashFiles('package.json', 'pyproject.toml', 'requirements.txt', 'go.mod', 'Cargo.toml', '*.sln', '*.slnx', '*.csproj', 'pom.xml', 'build.gradle', 'build.gradle.kts', 'scripts/ci.sh') == ''
+        run: |
+          echo "::error::No supported project file found. Add your stack's steps to ci.yml or create scripts/ci.sh."
+          exit 1
+
+      # ---------- Node (npm; change the commands for pnpm/yarn/bun) ----------
+      - name: Set up Node
+        if: hashFiles('package.json') != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+      - name: Node - install, lint, test, build
+        if: hashFiles('package.json') != ''
+        run: |
+          npm ci
+          npm run lint --if-present
+          npm run test --if-present
+          npm run build --if-present
+
+      # ---------- Python (pytest fails when no tests exist - intended) ----------
+      - name: Set up Python
+        if: hashFiles('pyproject.toml', 'requirements.txt') != ''
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Python - install, lint, test
+        if: hashFiles('pyproject.toml', 'requirements.txt') != ''
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+          if [ -f pyproject.toml ] && grep -q '^\[project\]' pyproject.toml; then pip install -e .; fi
+          ruff check .
+          pytest
+
+      # ---------- Go ----------
+      - name: Set up Go
+        if: hashFiles('go.mod') != ''
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Go - vet, test, build
+        if: hashFiles('go.mod') != ''
+        run: |
+          go vet ./...
+          go test ./...
+          go build ./...
+
+      # ---------- Rust ----------
+      - name: Rust - fmt, clippy, test
+        if: hashFiles('Cargo.toml') != ''
+        run: |
+          cargo fmt --check
+          cargo clippy --all-targets -- -D warnings
+          cargo test
+
+      # ---------- .NET (solution or project file in the repo root) ----------
+      - name: .NET - format check, build, test
+        if: hashFiles('*.sln', '*.slnx', '*.csproj') != ''
+        run: |
+          dotnet restore
+          dotnet format --verify-no-changes --no-restore
+          dotnet build --configuration Release --no-restore
+          dotnet test --configuration Release --no-build
+
+      # ---------- Java / Kotlin ----------
+      - name: Set up Java
+        if: hashFiles('pom.xml', 'build.gradle', 'build.gradle.kts') != ''
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Maven - verify
+        if: hashFiles('pom.xml') != ''
+        run: mvn --batch-mode verify
+      - name: Gradle - build
+        if: hashFiles('build.gradle', 'build.gradle.kts') != ''
+        run: |
+          if [ -f gradlew ]; then chmod +x gradlew && ./gradlew build; else gradle build; fi
+
+      # ---------- Anything else ----------
+      - name: Custom - scripts/ci.sh
+        if: hashFiles('scripts/ci.sh') != ''
+        run: bash scripts/ci.sh
