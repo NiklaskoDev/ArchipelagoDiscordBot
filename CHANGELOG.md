@@ -11,6 +11,7 @@ Sections per version: Added, Changed, Fixed, Removed, Security.
 - Live features: a thread and a role per game with the game's activity (`/setup feed` picks the kinds), opt-in direct messages with `/alerts` (items, hints, stuck players, game online, offered slots with take-over buttons), a pinned overview message and bot status, and Discord events for game starts and sign-up deadlines (`/setup events`). `/mydata` lists the alerts that are on; `/unlink` removes the person from the game roles.
 - Player tools: `/tracker` and `/hints` (with buttons to mark a hint), `/hint`, `/hint_location`, `/remaining`, `/say`, `/release`, `/collect`, `/status`, `/claim` and `/handover offer|cancel`, in all four languages.
 - Sign-ups from Discord: `/signup show|join|withdraw` (attach a YAML file, which the manager checks before it is saved and entered, or enter a saved config), `/signup open|close|test` for organizers (the deadline is read in the server's time zone; a test reports its result in the reply), and deadline reminders 24 hours and 1 hour before a round closes in the sign-ups channel, in all four languages. The bot's database gets a new table (migration 003, applied at startup).
+- MIT license.
 
 ### Fixed
 - One scheduled event that Discord refuses no longer stops the other events of the server from syncing.

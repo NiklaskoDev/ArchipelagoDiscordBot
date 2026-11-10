@@ -220,3 +220,7 @@ docker build -t ap-discord-bot .
 
 To run the bot from source, set the variables above (and `DISCORD_DEV_GUILD_ID` to your test server) and run
 `python -m apbot`. `CHANGELOG.md` lists what changed in each version.
+
+## License
+
+[MIT](LICENSE)
