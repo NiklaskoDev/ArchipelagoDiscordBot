@@ -21,6 +21,7 @@ Sections per version: Added, Changed, Fixed, Removed, Security.
 - A very long game address in `/game` is cut to fit.
 - `/handover offer` with a blank username offers the slot to anyone, as it says, instead of to a user with an empty name.
 - A wrong or missing encryption key no longer erases linked accounts; affected people are asked to /link again and admins see one warning.
+- The container's start-up message about fixing data folder ownership no longer mixes into the output of the command it runs.
 
 ## [0.1.0] - YYYY-MM-DD
 ### Added

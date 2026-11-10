@@ -37,7 +37,7 @@ getent passwd "$PUID" >/dev/null 2>&1 || useradd -u "$PUID" -g "$PGID" -d /tmp -
 # Only walk the whole tree when something is actually owned by somebody else (first start, restored backups).
 if [ -n "$(find "$DATA_DIR" ! -user "$PUID" -print -quit 2>/dev/null)" ] \
    || [ -n "$(find "$DATA_DIR" ! -group "$PGID" -print -quit 2>/dev/null)" ]; then
-    echo "Fixing ownership of $DATA_DIR for $PUID:$PGID"
+    echo "Fixing ownership of $DATA_DIR for $PUID:$PGID" >&2
     chown -R "$PUID:$PGID" "$DATA_DIR"
 fi
 
