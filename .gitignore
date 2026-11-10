@@ -39,3 +39,7 @@ Thumbs.db
 
 # Claude Code local settings
 .claude/settings.local.json
+
+# Bot data (SQLite file, heartbeat) when running from the repo
+/data/
+/bot-data/
