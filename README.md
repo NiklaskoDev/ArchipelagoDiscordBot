@@ -167,10 +167,12 @@ refuses `MANAGER_API_TOKEN`.
 
 #### Unraid
 
+The template pulls `ghcr.io/niklaskodev/archipelagodiscordbot:latest`, which exists from the first release on. Until then, build the image yourself (see [Development](#development)).
+
 1. Add the template in the Unraid terminal (or web terminal), until the bot is in Community Applications:
 
    ```sh
-   curl -fsSL -o /boot/config/plugins/dockerMan/templates-user/ap-discord-bot.xml      https://raw.githubusercontent.com/NiklaskoDev/ArchipelagoDiscordBot/main/unraid/ap-discord-bot.xml
+   curl -fsSL -o /boot/config/plugins/dockerMan/templates-user/ap-discord-bot.xml https://raw.githubusercontent.com/NiklaskoDev/ArchipelagoDiscordBot/main/unraid/ap-discord-bot.xml
    ```
 
    `-f` keeps an error page from being saved as the template. Run the same command again to update it.
