@@ -7,6 +7,7 @@ from discord import app_commands
 from fakes import make_bot
 from i18n_scan import scan
 
+from apbot.cogs.alerts import AlertsCog
 from apbot.cogs.games import GamesCog
 from apbot.cogs.linking import LinkingCog
 from apbot.cogs.setup import SetupCog
@@ -17,7 +18,10 @@ CATALOGS = {"de": de, "fr": fr, "nl": nl}
 COMMAND_NAME = re.compile(r"^[-_\w]{1,32}$")
 NAME_LIKE = re.compile(r"^[a-z0-9_-]{1,32}$")  # an English text that is a command, option or choice name
 MAX_DESCRIPTION = 100
-SAME_IN_EVERY_LANGUAGE = {"Manager", "Offline", "Online", "Slots", "Status", "Token", "Version"}
+SAME_IN_EVERY_LANGUAGE = {
+    "**{player}**: {message}", "Chat", "Hints", "Manager", "Offline", "Online", "Server: {message}", "Slots", "Status", "Token",
+    "Version",
+}
 
 
 def placeholders(text: str) -> set[str]:
@@ -106,13 +110,16 @@ async def command_payloads(tmp_path, manager) -> list[dict]:
     await bot.add_cog(SignupsCog(bot))
     await bot.add_cog(LinkingCog(bot))
     await bot.add_cog(SetupCog(bot))
+    await bot.add_cog(AlertsCog(bot))
     translator = BotTranslator()
     payloads = [await command.get_translated_payload(bot.tree, translator) for command in bot.tree.get_commands()]
     await bot.close()
     return payloads
 
 
-COMMAND_NAMES = {"games", "game", "signups", "wake", "start", "stop", "restart", "link", "unlink", "mydata", "setup"}
+COMMAND_NAMES = {
+    "games", "game", "signups", "wake", "start", "stop", "restart", "link", "unlink", "mydata", "setup", "alerts",
+}
 LOCALES = {"de", "fr", "nl"}
 
 
@@ -162,7 +169,7 @@ async def test_setup_is_server_only_and_needs_manage_server_by_default(tmp_path,
     assert setup["dm_permission"] is False
     assert int(setup["default_member_permissions"]) == discord.Permissions(manage_guild=True).value
     assert {option["name"] for option in setup["options"]} == {
-        "show", "manager", "channel", "role", "role_clear", "language", "timezone"
+        "show", "manager", "channel", "role", "role_clear", "language", "timezone", "feed", "events"
     }
 
 

@@ -164,6 +164,7 @@ async def test_mydata_lists_exactly_what_is_stored_and_privately(bot, manager):
         "Language": "Nederlands",
         "Linked": f"<t:{int(saved.linked_at)}:f>",
         "Last checked": f"<t:{int(saved.checked_at)}:f>",
+        "Alerts": "None",
     }
     assert USER_TOKEN not in json_text(message["embed"])
 

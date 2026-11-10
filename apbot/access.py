@@ -13,7 +13,7 @@ import discord
 
 from apbot.crypto import TokenCipher, TokenUndecryptable
 from apbot.db.guilds import GuildSettingsStore
-from apbot.db.links import STATUS_ACTIVE, LinkStore
+from apbot.db.links import STATUS_ACTIVE, LinkStore, UserLink
 from apbot.errors import MissingRoleError, NotLinkedError, UserFacingError
 from apbot.i18n import language_of
 from apbot.manager.errors import ReadOnlyToken, TokenInvalid
@@ -40,22 +40,33 @@ class Access:
         language = language_of(interaction.locale)
         if link.locale != language:
             self._links.set_locale(discord_id, language)  # direct messages later follow the language they use now
-        if link.status != STATUS_ACTIVE or link.token_ciphertext is None:
+        token = self.stored_token(link)
+        if token is None:
             raise _link_again()
+        return token
+
+    def stored_token(self, link: UserLink) -> str | None:
+        """The token of a link, decrypted just now; None when the link is not active or cannot be decrypted any more
+        (then it is marked invalid, so the person is told to link again)."""
+        if link.status != STATUS_ACTIVE or link.token_ciphertext is None:
+            return None
         try:
             token = self._cipher.decrypt(link.token_ciphertext)
             if self._cipher.needs_rotation(link.token_ciphertext):
-                self._links.replace_ciphertext(discord_id, self._cipher.encrypt(token))
+                self._links.replace_ciphertext(link.discord_user_id, self._cipher.encrypt(token))
         except TokenUndecryptable:
             log.error("A stored manager token cannot be decrypted; BOT_ENCRYPTION_KEY may have changed")
-            self.on_token_invalid(discord_id)
-            raise _link_again() from None
+            self.on_token_invalid(link.discord_user_id)
+            return None
         return token
 
     async def run(self, interaction: discord.Interaction, call: Callable[[str], Awaitable[T]]) -> T:
         """Calls the manager as the person: `call` gets their token. A token the manager refuses marks the link invalid;
         a read-only token is explained. Other manager errors pass through to the bot's error handler."""
-        token = self.user_token(interaction)
+        return await self.call_as(interaction, self.user_token(interaction), call)
+
+    async def call_as(self, interaction: discord.Interaction, token: str, call: Callable[[str], Awaitable[T]]) -> T:
+        """Like `run` for a caller that resolved the token itself (to answer "not linked" before deferring)."""
         try:
             return await call(token)
         except TokenInvalid:

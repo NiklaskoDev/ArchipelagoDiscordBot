@@ -9,6 +9,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from apbot.access import Access
+from apbot.cogs.alerts import AlertsCog
 from apbot.cogs.games import GamesCog
 from apbot.cogs.linking import LinkingCog
 from apbot.cogs.setup import SetupCog
@@ -18,13 +19,27 @@ from apbot.crypto import TokenCipher
 from apbot.db.database import DATABASE_FILE, Database
 from apbot.db.guilds import GuildSettingsStore
 from apbot.db.links import LinkStore
+from apbot.db.live import (
+    AlertPrefStore,
+    FeedCursorStore,
+    GameSpaceStore,
+    OverviewStore,
+    ScheduledEventStore,
+)
 from apbot.errors import user_message
 from apbot.heartbeat import HEARTBEAT_INTERVAL, Heartbeat
 from apbot.i18n import BotTranslator, language_of, t
 from apbot.manager.client import ManagerClient
+from apbot.services.alerts import AlertEngine
+from apbot.services.events import EVENTS_INTERVAL, Events
+from apbot.services.feeds import TICK, FeedPoller
 from apbot.services.game_cache import REFRESH_INTERVAL, GameCache
 from apbot.services.manager_watch import RETRY_INTERVAL, ManagerWatch, StartupFailure
+from apbot.services.overview import OVERVIEW_INTERVAL, Overview
+from apbot.services.relay import MAINTAIN_INTERVAL, Relay
 from apbot.services.scheduler import Periodic, StopPeriodic
+from apbot.services.user_sync import SYNC_INTERVAL, UserSync
+from apbot.ui.dynamic import HandoverAcceptButton, HandoverDeclineButton
 from apbot.ui.embeds import error_embed
 
 log = logging.getLogger(__name__)
@@ -48,12 +63,46 @@ class ApBot(commands.Bot):
         self.cipher = TokenCipher(config.encryption_keys)
         self.access = Access(self.links, self.guild_settings, self.cipher)
         self.cache = GameCache(self.manager, config.manager_api_token)
+        self.spaces = GameSpaceStore(self.db)
+        self.alert_prefs = AlertPrefStore(self.db)
+        self._overview_store = OverviewStore(self.db)
+        self._event_store = ScheduledEventStore(self.db)
+        self.user_sync = UserSync(self.links, self.access, self.manager)
+        self.relay = Relay(
+            self, self.spaces, self.guild_settings, self.cache, self.manager, config.manager_api_token,
+            self.user_sync.memberships,
+        )
+        self.alerts = AlertEngine(
+            self.alert_prefs, self.links, self.access, self.user_sync, self.manager, self.fetch_user
+        )
+        self.feeds = FeedPoller(
+            self.manager, config.manager_api_token, self.cache, self.user_sync, self.links, self.access,
+            FeedCursorStore(self.db),
+        )
+        self.overview = Overview(
+            self, self._overview_store, self.guild_settings, self.cache, self.manager, config.manager_api_token
+        )
+        self.events = Events(
+            self, self._event_store, self.guild_settings, self.cache, self.manager, config.manager_api_token
+        )
+        self.user_sync.listen(
+            on_events=self.alerts.handle_events,
+            on_memberships=self.relay.sync_roles,
+            on_token_stopped=self.alerts.token_stopped,
+        )
+        self.feeds.add_sink(self.relay.publish, public_only=True)  # a private game's feed reaches its players only
+        self.feeds.add_sink(self.alerts.handle)
         self.exit_code = 0
         self._watch = ManagerWatch(self.manager, config.manager_api_token, self.cache)
         self._shutdown: asyncio.Task | None = None
         self._periodic = [
             Periodic("game-cache", REFRESH_INTERVAL, self.cache.run_refresh),
             Periodic("heartbeat", HEARTBEAT_INTERVAL, Heartbeat(config.data_dir, self.is_ready).beat),
+            Periodic("user-sync", SYNC_INTERVAL, self.user_sync.run_once),
+            Periodic("feeds", TICK, self.feeds.run_once),
+            Periodic("relay", MAINTAIN_INTERVAL, self.relay.maintain),
+            Periodic("overview", OVERVIEW_INTERVAL, self.overview.run),
+            Periodic("events", EVENTS_INTERVAL, self.events.sync),
         ]
         self.tree.on_error = self.on_app_command_error
 
@@ -66,6 +115,8 @@ class ApBot(commands.Bot):
         await self.add_cog(SignupsCog(self))
         await self.add_cog(LinkingCog(self))
         await self.add_cog(SetupCog(self))
+        await self.add_cog(AlertsCog(self))
+        self.add_dynamic_items(HandoverAcceptButton, HandoverDeclineButton)
         await self._sync_commands()
         for task in self._periodic:
             task.start()
@@ -101,6 +152,14 @@ class ApBot(commands.Bot):
     async def on_guild_remove(self, guild: discord.Guild) -> None:
         """The bot left (or was removed from) a server: forget what was configured for it."""
         self.guild_settings.delete(guild.id)
+        self.spaces.delete_guild(guild.id)
+        self._overview_store.delete_guild(guild.id)
+        self._event_store.delete_guild(guild.id)
+
+    async def on_guild_role_delete(self, role: discord.Role) -> None:
+        """A deleted organizer or admin role must not stay configured: nobody could hold it, so /start, /stop and
+        /restart would be refused for everyone."""
+        self.guild_settings.clear_role(role.guild.id, role.id)
 
     async def on_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError) -> None:
         original = getattr(error, "original", error)

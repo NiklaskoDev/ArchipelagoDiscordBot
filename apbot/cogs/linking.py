@@ -116,11 +116,16 @@ class LinkingCog(commands.Cog):
         question = notice_embed(t("Unlink your manager account? The bot forgets your token and your settings.", lang))
         if not await view.ask(interaction, question):
             return
-        self.bot.links.delete(interaction.user.id)
+        self.bot.links.delete(interaction.user.id)  # the alert choices go with it
+        self.bot.user_sync.forget(interaction.user.id)
+        await self.bot.relay.sync_roles(interaction.user.id, frozenset())  # no game roles for someone who is unlinked
         done = notice_embed(t("Unlinked. Revoke the token in the manager under API tokens as well.", lang), SUCCESS)
         await interaction.edit_original_response(embed=done, view=None)
 
     @app_commands.command(name=locale_str("mydata"), description=locale_str("Show everything the bot stores about you"))
     async def mydata(self, interaction: discord.Interaction) -> None:
         lang = language_of(interaction.locale)
-        await reply(interaction, embed=link_status_embed(self.bot.links.get(interaction.user.id), lang), ephemeral=True)
+        embed = link_status_embed(
+            self.bot.links.get(interaction.user.id), lang, self.bot.alert_prefs.enabled(interaction.user.id)
+        )
+        await reply(interaction, embed=embed, ephemeral=True)

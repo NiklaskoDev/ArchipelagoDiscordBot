@@ -45,11 +45,17 @@ def link(store: LinkStore, discord_id=1, manager_id=10, username="alice", cipher
 # --- migrations --------------------------------------------------------------------------------------------------------
 def test_first_start_applies_the_migrations_and_records_them(tmp_path, clock):
     database = Database(tmp_path / "nested" / "bot.sqlite3", now=clock)  # the folder is created
-    assert database.migrate() == [1]
-    [row] = database.query_all("SELECT version, name, applied_at FROM schema_migrations")
-    assert (row["version"], row["name"], row["applied_at"]) == (1, "links_settings", 1000.0)
+    assert database.migrate() == [1, 2]
+    rows = database.query_all("SELECT version, name, applied_at FROM schema_migrations ORDER BY version")
+    assert [(r["version"], r["name"], r["applied_at"]) for r in rows] == [
+        (1, "links_settings", 1000.0),
+        (2, "live", 1000.0),
+    ]
     tables = {r["name"] for r in database.query_all("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    assert {"user_links", "guild_settings", "schema_migrations"} <= tables
+    assert {
+        "user_links", "guild_settings", "schema_migrations", "game_spaces", "feed_cursors", "alert_prefs",
+        "overview_messages", "scheduled_events",
+    } <= tables
     database.close()
 
 
@@ -61,7 +67,7 @@ def test_a_second_start_applies_nothing_and_keeps_the_data(tmp_path, clock):
     first.close()
     second = Database(path, now=clock)
     assert second.migrate() == []
-    assert len(second.query_all("SELECT * FROM schema_migrations")) == 1
+    assert len(second.query_all("SELECT * FROM schema_migrations")) == 2
     assert LinkStore(second, now=clock).get(1) is not None
     second.close()
 

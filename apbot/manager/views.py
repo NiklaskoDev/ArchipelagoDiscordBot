@@ -7,12 +7,29 @@ printed by mistake, whatever token the bot used.
 
 import logging
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 log = logging.getLogger(__name__)
 
 PLAYER_SLOT_TYPE = 1  # Archipelago: 1 is a player, 2 a group of players
+
+# The activity feed's entry kinds, each with the fields the bot reads. Anything else in an entry is dropped.
+FEED_FIELDS: dict[str, tuple[str, ...]] = {
+    "goal": ("player",),
+    "release": ("player",),
+    "collect": ("player",),
+    "join": ("player", "game"),
+    "part": ("player",),
+    "server": ("text",),
+    "hint": ("receiver", "item", "location", "finder", "entrance", "status"),
+    "item": ("finder", "item", "receiver", "location"),
+    "chat": ("player", "text"),
+    "status": ("player", "status", "note"),
+    "handover": ("player", "from", "to", "note"),
+    "handover_done": ("player", "to", "from"),
+}
+FEED_KINDS = tuple(FEED_FIELDS)
 
 
 @dataclass(frozen=True)
@@ -42,6 +59,7 @@ class GameSummary:
     created_at: float
     finished_at: float | None
     outcome: str | None  # finished | aborted, once the game is in the archive
+    visibility: str | None = field(default=None, kw_only=True)  # all | participants; None when the manager did not say
 
 
 @dataclass(frozen=True)
@@ -61,6 +79,65 @@ class SignupSummary:
     user_count: int
     slots_per_user: int
     creator: str | None
+
+
+@dataclass(frozen=True)
+class SlotRef:
+    slot: int
+    name: str
+
+
+@dataclass(frozen=True)
+class Offer:
+    """A slot its player hands over to this user (`to_me`) or to whoever takes it."""
+
+    slot: int
+    name: str
+    game: str
+    owner: str | None
+    note: str | None
+    to_me: bool
+
+
+@dataclass(frozen=True)
+class UserGame:
+    """A game as one linked user sees it: which slots are theirs and which are offered to them."""
+
+    id: int
+    name: str
+    state: str
+    finished_at: float | None
+    my_slots: tuple[SlotRef, ...]
+    offers: tuple[Offer, ...]
+
+
+@dataclass(frozen=True)
+class FeedEntry:
+    seq: int
+    at: float
+    kind: str
+    fields: Mapping[str, str] = field(default_factory=dict)
+
+    def get(self, name: str) -> str:
+        """A field's text, "" when the entry has none."""
+        return self.fields.get(name, "")
+
+
+@dataclass(frozen=True)
+class ActivityPage:
+    entries: tuple[FeedEntry, ...]
+    last: int  # the number of the newest entry the manager has, whatever was asked for
+
+
+@dataclass(frozen=True)
+class HintView:
+    receiver: str
+    item: str
+    location: str
+    finder: str
+    found: bool
+    for_me: bool
+    in_my_world: bool
 
 
 def _int(value: Any, default: int = 0) -> int:
@@ -111,6 +188,7 @@ def _summary_fields(raw: Mapping) -> dict[str, Any]:
         "created_at": _number(raw.get("created_at")) or 0.0,
         "finished_at": _number(raw.get("finished_at")),
         "outcome": _text(raw.get("outcome")),
+        "visibility": _text(raw.get("visibility")),
     }
 
 
@@ -144,6 +222,77 @@ def parse_signup(raw: Mapping) -> SignupSummary:
     )
 
 
+def _slot_ref(raw: Any) -> SlotRef | None:
+    if not isinstance(raw, Mapping) or _int(raw.get("slot"), -1) < 0:
+        return None
+    return SlotRef(slot=raw["slot"], name=_text(raw.get("name")) or "?")
+
+
+def _offer(raw: Any) -> Offer | None:
+    ref = _slot_ref(raw)
+    if ref is None:
+        return None
+    return Offer(
+        slot=ref.slot,
+        name=ref.name,
+        game=_text(raw.get("game")) or "?",
+        owner=_text(raw.get("from")),
+        note=_text(raw.get("note")),
+        to_me=bool(raw.get("to_me")),
+    )
+
+
+def parse_user_game(raw: Mapping) -> UserGame:
+    """Raises ValueError when the answer is not a game (no id)."""
+    summary = _summary_fields(raw)
+    my_slots = raw.get("my_slots") if isinstance(raw.get("my_slots"), list) else []
+    offers = raw.get("offered_slots") if isinstance(raw.get("offered_slots"), list) else []
+    return UserGame(
+        id=summary["id"],
+        name=summary["name"],
+        state=summary["state"],
+        finished_at=summary["finished_at"],
+        my_slots=tuple(ref for ref in map(_slot_ref, my_slots) if ref is not None),
+        offers=tuple(offer for offer in map(_offer, offers) if offer is not None),
+    )
+
+
+def parse_entry(raw: Any) -> FeedEntry | None:
+    """One entry of the activity feed, reduced to the fields of its kind; None for an unknown kind or a broken entry."""
+    if not isinstance(raw, Mapping) or raw.get("kind") not in FEED_FIELDS or _int(raw.get("seq"), -1) < 0:
+        return None
+    kind = raw["kind"]
+    texts = {name: raw[name] for name in FEED_FIELDS[kind] if isinstance(raw.get(name), str) and raw[name]}
+    return FeedEntry(seq=raw["seq"], at=_number(raw.get("at")) or 0.0, kind=kind, fields=texts)
+
+
+def parse_activity(raw: Any) -> ActivityPage:
+    """Raises ValueError when the answer is not an activity feed."""
+    if not isinstance(raw, Mapping) or not isinstance(raw.get("entries"), list) or _int(raw.get("last"), -1) < 0:
+        raise ValueError("The manager sent an activity feed in a form the bot does not know")
+    entries = (parse_entry(item) for item in raw["entries"])
+    return ActivityPage(entries=tuple(sorted((e for e in entries if e), key=lambda e: e.seq)), last=raw["last"])
+
+
+def parse_hints(raw: Any) -> tuple[HintView, ...]:
+    """The hints of a slot's tracker. Raises ValueError when the answer is not a tracker."""
+    if not isinstance(raw, Mapping) or not isinstance(raw.get("hints"), list):
+        raise ValueError("The manager sent a tracker in a form the bot does not know")
+    return tuple(
+        HintView(
+            receiver=_text(hint.get("receiver")) or "?",
+            item=_text(hint.get("item")) or "?",
+            location=_text(hint.get("location")) or "?",
+            finder=_text(hint.get("finder")) or "?",
+            found=bool(hint.get("found")),
+            for_me=bool(hint.get("for_me")),
+            in_my_world=bool(hint.get("in_my_world")),
+        )
+        for hint in raw["hints"]
+        if isinstance(hint, Mapping)
+    )
+
+
 def _parse_all(raw: Any, parse, what: str) -> list:
     if not isinstance(raw, list):
         raise TypeError(f"expected a list of {what}")
@@ -158,6 +307,10 @@ def _parse_all(raw: Any, parse, what: str) -> list:
 
 def parse_games(raw: Any) -> list[GameSummary]:
     return _parse_all(raw, parse_game_summary, "games")
+
+
+def parse_user_games(raw: Any) -> list[UserGame]:
+    return _parse_all(raw, parse_user_game, "games")
 
 
 def parse_signups(raw: Any) -> list[SignupSummary]:

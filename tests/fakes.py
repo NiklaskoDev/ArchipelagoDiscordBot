@@ -1,6 +1,7 @@
 """Stand-ins for the manager (httpx.MockTransport) and for Discord (small recording objects). No real network."""
 
 import json
+from types import SimpleNamespace
 
 import discord
 import httpx
@@ -64,6 +65,37 @@ class FakeManager:
 
     def paths(self) -> list[str]:
         return [request.url.path for request in self.requests]
+
+
+def by_token(answers: dict[str, object]):
+    """An answer for `FakeManager.add` that depends on whose token asked: {token: body | (status, body)}."""
+
+    def answer(request: httpx.Request):
+        token = request.headers.get("Authorization", "").removeprefix("Bearer ")
+        return answers.get(token, (401, {"detail": "This API token is not valid (any more)"}))
+
+    return answer
+
+
+def activity_json(entries: list[dict], last: int | None = None) -> dict:
+    """The manager's answer to GET /api/games/{id}/activity."""
+    return {"entries": entries, "last": last if last is not None else max((e["seq"] for e in entries), default=0)}
+
+
+def entry(seq: int, kind: str, **fields) -> dict:
+    return {"seq": seq, "at": 1_700_000_000.0 + seq, "kind": kind, **fields}
+
+
+def tracker_json(hints=()) -> dict:
+    return {"slot": 1, "name": "Alice", "game": "Timespinner", "goal": False, "items": [], "locations": [],
+            "hints": list(hints), "hints_used": 0, "items_left": 0, "release": "available", "collect": "available"}
+
+
+def hint_json(item="Sword", receiver="Alice", finder="Bob", location="Chest", **overrides) -> dict:
+    hint = {"item": item, "receiver": receiver, "for_me": True, "location": location, "finder": finder,
+            "in_my_world": False, "entrance": "", "found": False, "flags": 0, "status": 0, "finder_slot": 2,
+            "location_id": 77}
+    return {**hint, **overrides}
 
 
 # ---------------------------------------------------------------------------------------------------------------------
@@ -165,10 +197,39 @@ class FakeUser:
         return object() if role_id in self._roles else None
 
 
-class FakeGuild:
-    def __init__(self, guild_id: int = 5000):
-        self.id = guild_id
-        self.me = FakeUser(1)
+def _http_error(cls, status: int, reason: str):
+    return cls(SimpleNamespace(status=status, reason=reason), reason)
+
+
+def not_found() -> discord.NotFound:
+    return _http_error(discord.NotFound, 404, "Not Found")
+
+
+def forbidden() -> discord.Forbidden:
+    return _http_error(discord.Forbidden, 403, "Forbidden")
+
+
+class FakeMember(FakeUser):
+    """A member the bot can give roles to: records the calls."""
+
+    def __init__(self, user_id: int = 1001, roles=()):
+        super().__init__(user_id, roles)
+        self.added: list[int] = []
+        self.removed: list[int] = []
+
+    async def add_roles(self, *roles, reason=None) -> None:
+        self._roles |= {role.id for role in roles}
+        self.added += [role.id for role in roles]
+
+    async def remove_roles(self, *roles, reason=None) -> None:
+        self._roles -= {role.id for role in roles}
+        self.removed += [role.id for role in roles]
+
+
+class FakeBotMember(FakeUser):
+    def __init__(self, **permissions):
+        super().__init__(1)
+        self.guild_permissions = discord.Permissions(**permissions)
 
 
 class FakeRole:
@@ -176,9 +237,214 @@ class FakeRole:
         self.id = role_id
         self.mention = f"<@&{role_id}>"
         self._default = default
+        self.mentionable = False
+        self.edits: list[dict] = []
+        self.deleted = False
 
     def is_default(self) -> bool:
         return self._default
+
+    async def edit(self, **kwargs) -> None:
+        self.edits.append(kwargs)
+        self.mentionable = kwargs.get("mentionable", self.mentionable)
+
+    async def delete(self, **kwargs) -> None:
+        self.deleted = True
+
+
+class FakeMessage:
+    def __init__(self, message_id: int, channel, content=None, **kwargs):
+        self.id = message_id
+        self.channel = channel
+        self.content = content
+        self.kwargs = kwargs
+        self.edits: list[dict] = []
+        self.pinned = False
+        self.deleted = False
+
+    async def edit(self, **kwargs) -> None:
+        self.edits.append(kwargs)
+
+    async def fetch(self):
+        if self.deleted:
+            raise not_found()
+        return self
+
+    async def delete(self) -> None:
+        self.deleted = True
+
+    async def pin(self) -> None:
+        self.pinned = True
+
+
+class FakeMessageable:
+    """A channel, thread or person that records what is sent into it."""
+
+    def __init__(self, channel_id: int):
+        self.id = channel_id
+        self.mention = f"<#{channel_id}>"
+        self.messages: dict[int, FakeMessage] = {}
+        self.fail_with: Exception | None = None
+        self._next_message = channel_id * 1000
+
+    @property
+    def sent(self) -> list[FakeMessage]:
+        return list(self.messages.values())
+
+    async def send(self, content=None, **kwargs) -> FakeMessage:
+        if self.fail_with:
+            raise self.fail_with
+        self._next_message += 1
+        message = FakeMessage(self._next_message, self, content, **kwargs)
+        self.messages[message.id] = message
+        return message
+
+    def get_partial_message(self, message_id: int) -> FakeMessage:
+        found = self.messages.get(message_id)
+        if found is not None:
+            return found
+        gone = FakeMessage(message_id, self)  # never sent, or deleted: every call on it says "not found"
+        gone.deleted = True
+
+        async def missing(**kwargs):
+            raise not_found()
+
+        gone.edit = missing
+        return gone
+
+
+class FakeThread(FakeMessageable):
+    def __init__(self, thread_id: int, name: str = ""):
+        super().__init__(thread_id)
+        self.name = name
+        self.archived = False
+        self.locked = False
+        self.edits: list[dict] = []
+
+    async def edit(self, **kwargs) -> None:
+        self.edits.append(kwargs)
+        self.archived = kwargs.get("archived", self.archived)
+        self.locked = kwargs.get("locked", self.locked)
+
+
+class FakeTextChannel(FakeMessageable):
+    def __init__(self, channel_id: int):
+        super().__init__(channel_id)
+        self.threads: list[FakeThread] = []
+        self.thread_requests: list[dict] = []
+        self._next_thread = channel_id * 100
+
+    async def create_thread(self, **kwargs) -> FakeThread:
+        if self.fail_with:
+            raise self.fail_with
+        self.thread_requests.append(kwargs)
+        self._next_thread += 1
+        thread = FakeThread(self._next_thread, kwargs.get("name", ""))
+        self.threads.append(thread)
+        return thread
+
+
+class FakeScheduledEvent:
+    def __init__(self, event_id: int, **kwargs):
+        self.id = event_id
+        self.kwargs = kwargs
+        self.edits: list[dict] = []
+        self.deleted = False
+
+    async def edit(self, **kwargs) -> None:
+        self.edits.append(kwargs)
+
+    async def delete(self) -> None:
+        self.deleted = True
+
+
+class FakeGuild:
+    """A server the bot is in: its channels, roles, members and scheduled events by id."""
+
+    def __init__(self, guild_id: int = 5000, **bot_permissions):
+        self.id = guild_id
+        self.me = FakeBotMember(**bot_permissions)
+        self.channels: dict[int, FakeTextChannel] = {}
+        self.roles: dict[int, FakeRole] = {}
+        self.members: dict[int, FakeMember] = {}
+        self.events: dict[int, FakeScheduledEvent] = {}
+        self.created_roles: list[dict] = []
+        self.created_events: list[dict] = []
+        self._next_role = guild_id * 10
+        self._next_event = guild_id * 10
+
+    def add_channel(self, channel_id: int) -> FakeTextChannel:
+        channel = self.channels[channel_id] = FakeTextChannel(channel_id)
+        return channel
+
+    def get_channel(self, channel_id: int):
+        return self.channels.get(channel_id)
+
+    def get_thread(self, thread_id: int):
+        return next((t for channel in self.channels.values() for t in channel.threads if t.id == thread_id), None)
+
+    async def fetch_channel(self, channel_id: int):
+        found = self.get_thread(channel_id) or self.get_channel(channel_id)
+        if found is None:
+            raise not_found()
+        return found
+
+    def get_role(self, role_id: int):
+        return self.roles.get(role_id)
+
+    async def create_role(self, **kwargs) -> FakeRole:
+        self._next_role += 1
+        role = self.roles[self._next_role] = FakeRole(self._next_role)
+        self.created_roles.append(kwargs)
+        return role
+
+    def add_member(self, user_id: int, roles=()) -> FakeMember:
+        member = self.members[user_id] = FakeMember(user_id, roles)
+        return member
+
+    async def fetch_member(self, user_id: int) -> FakeMember:
+        if user_id not in self.members:
+            raise not_found()
+        return self.members[user_id]
+
+    async def create_scheduled_event(self, **kwargs) -> FakeScheduledEvent:
+        self._next_event += 1
+        event = self.events[self._next_event] = FakeScheduledEvent(self._next_event, **kwargs)
+        self.created_events.append(kwargs)
+        return event
+
+    async def fetch_scheduled_event(self, event_id: int) -> FakeScheduledEvent:
+        if event_id not in self.events:
+            raise not_found()
+        return self.events[event_id]
+
+
+class FakeDiscordClient:
+    """What the services need of the bot's Discord connection."""
+
+    def __init__(self, *guilds: FakeGuild, ready: bool = True):
+        self.guilds = list(guilds)
+        self._ready = ready
+        self.presence: list = []
+
+    def is_ready(self) -> bool:
+        return self._ready
+
+    def get_guild(self, guild_id: int):
+        return next((g for g in self.guilds if g.id == guild_id), None)
+
+    async def change_presence(self, **kwargs) -> None:
+        self.presence.append(kwargs["activity"])
+
+
+class FakeDirectory:
+    """`fetch_user` for the alert engine: one person (something to send direct messages into) per id."""
+
+    def __init__(self):
+        self.users: dict[int, FakeMessageable] = {}
+
+    async def __call__(self, user_id: int) -> FakeMessageable:
+        return self.users.setdefault(user_id, FakeMessageable(user_id))
 
 
 class FakeChannel:

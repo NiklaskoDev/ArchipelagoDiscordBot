@@ -41,6 +41,8 @@ def manager_ok(manager, account=BOT_ACCOUNT, health=HEALTH):
         ("role_clear", ("organizer",)),
         ("language", ("de",)),
         ("timezone", ("Europe/Berlin",)),
+        ("feed", ("7",)),
+        ("events", (True,)),
     ],
 )
 async def test_every_setup_command_refuses_people_without_manage_server_or_the_admin_role(bot, manager, command, args):

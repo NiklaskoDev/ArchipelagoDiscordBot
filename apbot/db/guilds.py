@@ -59,6 +59,17 @@ class GuildSettingsStore:
             (guild_id, *values.values(), self._now()),
         )
 
+    def clear_role(self, guild_id: int, role_id: int) -> None:
+        """A role was deleted in Discord: the organizer or admin role that was it is not set any more (a deleted
+        organizer role would otherwise lock everyone out of /start, /stop and /restart)."""
+        self._db.execute(
+            "UPDATE guild_settings SET"
+            " organizer_role_id = CASE WHEN organizer_role_id = ?1 THEN NULL ELSE organizer_role_id END,"
+            " admin_role_id = CASE WHEN admin_role_id = ?1 THEN NULL ELSE admin_role_id END,"
+            " updated_at = ?2 WHERE guild_id = ?3 AND ?1 IN (organizer_role_id, admin_role_id)",
+            (role_id, self._now(), guild_id),
+        )
+
     def delete(self, guild_id: int) -> None:
         """Forgets everything about a server (the bot was removed from it)."""
         self._db.execute("DELETE FROM guild_settings WHERE guild_id = ?", (guild_id,))

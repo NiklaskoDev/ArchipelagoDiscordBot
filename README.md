@@ -27,7 +27,8 @@ more. These replies are private (only you see them).
 |---|---|---|
 | `/link` | everyone | Opens a form for your manager API token. Create one in the manager under *API tokens* with access *Read and change* and name it "Discord bot". The token is checked, stored encrypted and never shown again. |
 | `/unlink` | linked users | Forgets your token and settings after a confirmation. Revoke the token in the manager as well: the bot cannot do that. |
-| `/mydata` | everyone | Everything the bot stores about you. |
+| `/mydata` | everyone | Everything the bot stores about you, the alerts you turned on included. |
+| `/alerts` | linked users | Choose which direct messages the bot sends you (see below). All are off until you pick them. |
 | `/wake game:` | linked users | Wakes a sleeping game (players of the game, and managers). |
 | `/start`, `/stop`, `/restart game:` | linked users, organizer role if set | Starts, stops or restarts a game, as far as the manager allows you. The manager's answer is shown as it is, for example "This game opens at its planned time". |
 
@@ -43,8 +44,33 @@ For people with the *Manage Server* permission, and for the admin role if the se
 | `/setup role kind: role:`, `/setup role_clear kind:` | The organizer role (limits `/start`, `/stop`, `/restart`; without one, everyone linked may try) and the admin role (may use `/setup` without *Manage Server*). |
 | `/setup language language:` | The language of the bot's posts in this server. |
 | `/setup timezone timezone:` | The time zone for dates typed in this server. |
+| `/setup feed game:` | Choose which kinds of activity the thread of a game shows. |
+| `/setup events enabled:` | Turn Discord events for game starts and sign-up deadlines on or off. Needs the *Manage Events* permission to turn on. |
 
-The channel settings are saved now and used by later versions; nothing is posted in them yet.
+The sign-ups channel is saved now and used by a later version.
+
+### Live: threads, direct messages, overview and events
+
+The bot reads each game's activity feed from the manager every few seconds while its server is up.
+
+- **Threads and roles.** With a games channel set (`/setup channel kind:games`), every game the bot account sees gets a
+  public thread named after it and a role "AP game name" that goes to the linked players of the game. The thread shows
+  goals, releases, collects, hints, chat, server messages, status changes and slot hand-overs; items, joins and leaves
+  are off until you tick them with `/setup feed`. When a game comes online the role is pinged in its thread. When a game
+  is finished the thread gets a summary, is archived and locked, and the role is deleted. Only games that are visible to
+  everyone get a thread; a private game never appears in a server.
+- **Direct messages (`/alerts`).** Linked people can ask for a message when an item arrives for one of their slots, when
+  an item they were hinted is found, when a player is stuck and waits for items in their world, when one of their games
+  comes online, and when a slot is offered to them (with buttons to take it over or decline). This works for private
+  games too, because the bot reads those with the player's own token. Someone who has closed their DMs is left alone
+  for a day. If the manager stops accepting a person's token, they get one message about it.
+- **Overview.** With an overview channel set, one pinned message lists the games and open sign-up rounds and is edited
+  when something changes. The bot's status shows how many games are online.
+- **Events.** With events turned on, the planned start of a game and the deadline of an open sign-up round become Discord
+  events.
+
+If the manager also posts to a Discord webhook (game online, stuck, hand-over), turn that off for the channels the bot
+posts in, or every message appears twice.
 
 ## Setup
 
@@ -55,10 +81,12 @@ The channel settings are saved now and used by later versions; nothing is posted
 2. Leave all *Privileged Gateway Intents* off. The bot needs the `guilds` intent only, and it reads no messages.
 3. Invite it to your server with this link (replace `YOUR_APPLICATION_ID` with the application id from the portal):
 
-   `https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot+applications.commands`
+   `https://discord.com/oauth2/authorize?client_id=YOUR_APPLICATION_ID&scope=bot+applications.commands&permissions=335275977728`
 
-   The commands in this version need no channel permissions. `/setup channel` tells you which permissions the bot needs
-   in a channel you pick.
+   The link asks for what the live features need: View Channels, Send Messages, Send Messages in Threads, Create Public
+   Threads, Manage Threads, Embed Links, Read Message History, Manage Messages (to pin the overview), Manage Roles (game
+   roles) and Manage Events (scheduled events). The commands alone need none of them. `/setup channel` tells you which
+   permissions the bot lacks in a channel you pick.
 
 ### 2. The bot's account on the manager
 
@@ -115,10 +143,13 @@ What the bot stores, in `DATA_DIR/bot.sqlite3`:
 - For each person who ran `/link`: their Discord user id, their manager user id and username, their manager API token
   (encrypted with `BOT_ENCRYPTION_KEY`, plus its last four characters so `/mydata` can tell tokens apart), their
   language, and when they linked. No messages, no Discord names.
-- For each server that ran `/setup`: its settings (language, time zone, channels and roles).
+- For each person: the alerts they turned on with `/alerts`.
+- For each server that ran `/setup`: its settings (language, time zone, channels, roles, events on or off), the thread
+  and role the bot made for each game, the overview message and the Discord events it made.
+- For each game: how far its activity feed was read.
 
-`/mydata` shows a person everything stored about them. `/unlink` deletes it. When the bot leaves a server, that
-server's settings are deleted. The bot cannot revoke a token in the manager: after `/unlink`, do that under *API tokens*.
+`/mydata` shows a person everything stored about them. `/unlink` deletes it, takes the person out of the game roles
+and forgets their alerts. When the bot leaves a server, that server's data is deleted. The bot cannot revoke a token in the manager: after `/unlink`, do that under *API tokens*.
 A token pasted into a normal channel by mistake cannot be read by the bot (it reads no messages), but other people in
 the channel can see it: revoke it in the manager.
 

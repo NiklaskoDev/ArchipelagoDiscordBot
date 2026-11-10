@@ -22,7 +22,9 @@ from apbot.manager.errors import (
 from apbot.services.manager_watch import StartupFailure
 
 
-COMMAND_NAMES = {"games", "game", "signups", "wake", "start", "stop", "restart", "link", "unlink", "mydata", "setup"}
+COMMAND_NAMES = {
+    "games", "game", "signups", "wake", "start", "stop", "restart", "link", "unlink", "mydata", "setup", "alerts",
+}
 
 
 def invoke_error(original: Exception) -> app_commands.CommandInvokeError:
@@ -266,7 +268,7 @@ async def test_no_heartbeat_while_the_gateway_is_not_connected(no_discord, manag
 # --- the database and the keys -----------------------------------------------------------------------------------------
 def test_the_bot_opens_and_migrates_its_database_in_the_data_folder(bot, tmp_path):
     assert (tmp_path / "bot.sqlite3").exists()
-    assert [r["version"] for r in bot.db.query_all("SELECT version FROM schema_migrations")] == [1]
+    assert [r["version"] for r in bot.db.query_all("SELECT version FROM schema_migrations")] == [1, 2]
 
 
 async def test_closing_the_bot_closes_the_database(no_discord, manager):

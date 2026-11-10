@@ -44,6 +44,7 @@ def test_stored_data_embed_has_every_stored_field_and_not_the_ciphertext():
         "Language": "Deutsch",
         "Linked": "<t:1700000000:f>",
         "Last checked": "<t:1700000500:f>",
+        "Alerts": "None",
     }
     assert "cipher-bytes" not in json_text(embed)
 
@@ -81,6 +82,7 @@ def test_settings_embed_shows_defaults_and_set_values():
     assert default == {
         "Language": "English", "Time zone": "UTC", "Games channel": "Not set", "Sign-ups channel": "Not set",
         "Overview channel": "Not set", "Organizer role": "Not set", "Admin role": "Not set",
+        "Scheduled events": "Off",
     }
     custom = settings_embed(
         GuildSettings(1, language="nl", timezone="Europe/Berlin", games_channel_id=5, signups_channel_id=6,
@@ -90,6 +92,7 @@ def test_settings_embed_shows_defaults_and_set_values():
     assert fields(custom) == {
         "Sprache": "Nederlands", "Zeitzone": "Europe/Berlin", "Spielekanal": "<#5>", "Anmeldekanal": "<#6>",
         "Übersichtskanal": "<#7>", "Organisator-Rolle": "<@&8>", "Admin-Rolle": "<@&9>",
+        "Geplante Events": "Aus",
     }
 
 

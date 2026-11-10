@@ -3,7 +3,7 @@
 Everything a person or the manager wrote goes through `safe_text`; fixed texts go through `t`.
 """
 
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 
 import discord
 
@@ -51,6 +51,13 @@ _PLAYER_STATUS_LABELS = {
     "playing": translatable("Playing"),
     "stuck": translatable("Stuck"),
     "away": translatable("Away"),
+}
+ALERT_KIND_LABELS = {
+    "item_received": translatable("An item arrives for one of my slots"),
+    "hint_found": translatable("An item I was hinted is found"),
+    "stuck_in_my_world": translatable("A player is stuck and waits for items in my world"),
+    "game_online": translatable("One of my games comes online"),
+    "slot_offered": translatable("A slot is offered to me"),
 }
 
 
@@ -186,6 +193,36 @@ def signups_embed(signups: Sequence[SignupSummary], lang: str) -> discord.Embed:
     return _list_embed(title, [_signup_line(s, lang) for s in signups[:LIST_LINES]], len(signups), lang)
 
 
+def _field_lines(lines: Sequence[str], empty: str, lang: str) -> str:
+    """Lines for one field: those that fit, and how many were left out; `empty` when there are none."""
+    if not lines:
+        return empty
+    shown, _ = fit_lines(lines, FIELD_VALUE - MORE_LINE_RESERVE)
+    text = "\n".join(shown)
+    return f"{text}\n{_more_line(len(lines) - len(shown), lang)}" if len(shown) < len(lines) else text
+
+
+def overview_embed(games: Sequence[GameSummary], signups: Sequence[SignupSummary], lang: str) -> discord.Embed:
+    """The pinned overview of a server: the games (see views.listed_games) and the open sign-up rounds. Nothing in it
+    changes by itself with time, so the same content gives the same embed."""
+    embed = discord.Embed(title=t("Overview", lang), colour=ACCENT)
+    game_lines = [_game_line(g, lang) for g in games]
+    signup_lines = [_signup_line(s, lang) for s in signups]
+    embed.add_field(
+        name=t("Games", lang),
+        value=_field_lines(game_lines, t("No games are running. Organizers can add one in the manager.", lang), lang),
+        inline=False,
+    )
+    embed.add_field(
+        name=t("Sign-ups", lang),
+        value=_field_lines(
+            signup_lines, t("No sign-up rounds are open. Organizers can open one in the manager.", lang), lang
+        ),
+        inline=False,
+    )
+    return embed
+
+
 def error_embed(message: str) -> discord.Embed:
     """`message` is already in the reader's language: what happened and what to do about it."""
     return discord.Embed(description=message, colour=ERROR)
@@ -209,7 +246,13 @@ def linked_embed(manager_username: str, lang: str) -> discord.Embed:
     return notice_embed(t("Linked as **{username}**", lang, username=safe_text(manager_username, NAME_LIMIT)), SUCCESS)
 
 
-def link_status_embed(link: UserLink | None, lang: str) -> discord.Embed:
+def alerts_text(kinds: Collection[str], lang: str) -> str:
+    """The alerts a person chose, one per line, in the order of ALERT_KIND_LABELS."""
+    chosen = [t(label, lang) for kind, label in ALERT_KIND_LABELS.items() if kind in kinds]
+    return "\n".join(chosen) if chosen else t("None", lang)
+
+
+def link_status_embed(link: UserLink | None, lang: str, alerts: Collection[str] = ()) -> discord.Embed:
     """Everything the bot stores about one person (/mydata). The token itself is never part of it, only its last
     characters."""
     title = t("Your stored data", lang)
@@ -225,6 +268,7 @@ def link_status_embed(link: UserLink | None, lang: str) -> discord.Embed:
     embed.add_field(name=t("Language", lang), value=LANGUAGE_NAMES.get(link.locale, link.locale))
     embed.add_field(name=t("Linked", lang), value=ts(link.linked_at, "f"))
     embed.add_field(name=t("Last checked", lang), value=ts(link.checked_at, "f"))
+    embed.add_field(name=t("Alerts", lang), value=alerts_text(alerts, lang), inline=False)
     return embed
 
 
@@ -245,6 +289,7 @@ def settings_embed(settings: GuildSettings, lang: str) -> discord.Embed:
     embed.add_field(name=t("Overview channel", lang), value=_channel_or_unset(settings.overview_channel_id, lang))
     embed.add_field(name=t("Organizer role", lang), value=_role_or_unset(settings.organizer_role_id, lang))
     embed.add_field(name=t("Admin role", lang), value=_role_or_unset(settings.admin_role_id, lang))
+    embed.add_field(name=t("Scheduled events", lang), value=t("On", lang) if settings.scheduled_events else t("Off", lang))
     return embed
 
 

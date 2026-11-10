@@ -111,10 +111,12 @@ class GamesCog(commands.Cog):
         game_id = parse_game_id(game)
         if organizers_only:
             self.bot.access.require_role(interaction, "organizer")
-        self.bot.access.user_token(interaction)  # not linked: say so before anything is shown as "thinking"
+        token = self.bot.access.user_token(interaction)  # not linked: say so before anything is shown as "thinking"
         await interaction.response.defer(ephemeral=True)
         try:
-            raw = await self.bot.access.run(interaction, lambda token: action(self.bot.manager, token, game_id))
+            raw = await self.bot.access.call_as(
+                interaction, token, lambda user_token: action(self.bot.manager, user_token, game_id)
+            )
         except NotFound:
             raise UserFacingError("That game was not found. Pick one from the list.") from None
         await reply(interaction, embed=game_state_embed(parse_game_summary(raw), lang), ephemeral=True)

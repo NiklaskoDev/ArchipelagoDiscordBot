@@ -4,11 +4,12 @@ One connection, used from the event loop only. The queries are small and local, 
 thread pool. Each statement commits by itself (autocommit); `migrate` wraps every migration in one transaction.
 """
 
+import contextlib
 import logging
 import re
 import sqlite3
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +50,17 @@ class Database:
 
     def query_all(self, sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
         return self.execute(sql, params).fetchall()
+
+    @contextlib.contextmanager
+    def transaction(self) -> Iterator[None]:
+        """Several statements that succeed or fail together."""
+        self._conn.execute("BEGIN")
+        try:
+            yield
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
+        self._conn.execute("COMMIT")
 
     def migrate(self) -> list[int]:
         """Applies the migrations that have not run yet, oldest first, each in its own transaction. Returns their

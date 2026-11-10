@@ -27,6 +27,7 @@ log = logging.getLogger(__name__)
 
 TIMEOUT = httpx.Timeout(10, connect=5)
 CONTROL_TIMEOUT = httpx.Timeout(60, connect=5)  # stopping a game waits for its server to save and exit (up to ~25 s)
+TRACKER_TIMEOUT = httpx.Timeout(30, connect=5)  # the manager reads the game's save to answer
 RETRY_DELAYS = (0.5, 1.0, 2.0)  # seconds before each retry of a read
 MAX_DETAIL_LENGTH = 300
 UNAVAILABLE_STATUSES = frozenset({502, 503, 504})
@@ -97,15 +98,15 @@ class ManagerClient:
         except ValueError:
             raise ManagerUnavailable(response.status_code, "The manager sent an answer that is not JSON") from None
 
-    async def _get(self, path: str, token: str | None) -> Any:
+    async def _get(self, path: str, token: str | None, *, timeout: httpx.Timeout | None = None) -> Any:
         """A read: retried when the manager is busy or restarting. Changes are never retried (they might repeat)."""
         for delay in RETRY_DELAYS:
             try:
-                return await self._send("GET", path, token)
+                return await self._send("GET", path, token, timeout=timeout)
             except ManagerUnavailable as exc:
                 log.debug("GET %s failed (%s), retrying in %ss", path, exc.status or "no answer", delay)
                 await self._sleep(delay)
-        return await self._send("GET", path, token)
+        return await self._send("GET", path, token, timeout=timeout)
 
     async def _post(self, path: str, token: str, *, timeout: httpx.Timeout | None = None) -> Any:
         """A change without a body. Never retried: the first try may have worked even when no answer came back."""
@@ -137,3 +138,19 @@ class ManagerClient:
 
     async def restart(self, token: str, game_id: int) -> dict:
         return await self._post(f"/api/games/{int(game_id)}/restart", token, timeout=CONTROL_TIMEOUT)
+
+    async def activity(self, token: str, game_id: int, after: int) -> dict:
+        """The activity feed of a game: `{"entries": [...], "last": int}`, the entries numbered after `after`."""
+        return await self._get(f"/api/games/{int(game_id)}/activity?after={max(int(after), 0)}", token)
+
+    async def tracker(self, token: str, game_id: int, slot: int) -> dict:
+        """One slot's items, locations and hints. Only its player (or the game's organizer) may ask."""
+        path = f"/api/games/{int(game_id)}/slots/{int(slot)}/tracker"
+        return await self._get(path, token, timeout=TRACKER_TIMEOUT)
+
+    async def accept_handover(self, token: str, game_id: int, slot: int) -> dict:
+        return await self._post(f"/api/games/{int(game_id)}/slots/{int(slot)}/handover/accept", token)
+
+    async def cancel_handover(self, token: str, game_id: int, slot: int) -> dict:
+        """The player takes their offer back, or the person it was offered to declines. Not retried, like every change."""
+        return await self._send("DELETE", f"/api/games/{int(game_id)}/slots/{int(slot)}/handover", token)

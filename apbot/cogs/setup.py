@@ -13,13 +13,18 @@ from discord import app_commands
 from discord.app_commands import locale_str
 from discord.ext import commands
 
+from apbot.autocomplete import game_choices_public
+from apbot.cogs.games import parse_game_id
 from apbot.errors import UserFacingError
 from apbot.i18n import LANGUAGE_NAMES, LANGUAGES, language_of, t, translatable
 from apbot.manager.errors import ManagerError
+from apbot.manager.views import FEED_KINDS
 from apbot.services.manager_watch import ManagerReport, check_manager
 from apbot.ui.embeds import manager_check_embed, notice_embed, settings_embed
+from apbot.ui.feed import FEED_KIND_LABELS
 from apbot.ui.respond import reply
 from apbot.ui.style import AUTOCOMPLETE, SUCCESS
+from apbot.ui.views import MultiSelectView
 
 if TYPE_CHECKING:
     from apbot.bot import ApBot
@@ -203,3 +208,41 @@ class SetupCog(commands.Cog):
     @timezone.autocomplete("timezone")
     async def timezone_autocomplete(self, interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
         return timezone_choices(current)
+
+    @setup.command(name=locale_str("feed"), description=locale_str("Choose what the thread of a game shows"))
+    @app_commands.describe(game=locale_str("The game"))
+    @app_commands.rename(game=locale_str("game"))
+    @app_commands.autocomplete(game=game_choices_public)
+    async def feed(self, interaction: discord.Interaction, game: app_commands.Range[str, 1, 20]) -> None:
+        lang = self._admin_only(interaction)
+        game_id, guild_id = parse_game_id(game), interaction.guild.id
+        space = self.bot.spaces.get(guild_id, game_id)
+        if space is None or space.closed_at is not None:
+            raise UserFacingError("This game has no open thread in this server")
+
+        async def save(clicked: discord.Interaction, kinds: list[str]) -> discord.Embed:
+            self.bot.access.require_role(clicked, "admin")  # the list may be used later, by someone who lost the role
+            self.bot.spaces.set_kinds(guild_id, game_id, kinds)
+            return notice_embed(t("Saved. The thread shows what you ticked.", language_of(clicked.locale)), SUCCESS)
+
+        view = MultiSelectView(
+            interaction.user.id,
+            lang,
+            [(kind, t(FEED_KIND_LABELS[kind], lang)) for kind in FEED_KINDS],
+            space.kinds,
+            save,
+            placeholder=t("Choose what the thread shows", lang),
+        )
+        embed = notice_embed(t("Choose what the thread of this game shows. Items, joins and leaves are off by default.", lang))
+        await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+
+    @setup.command(name=locale_str("events"), description=locale_str("Turn Discord events for game starts and deadlines on or off"))
+    @app_commands.describe(enabled=locale_str("On or off"))
+    @app_commands.rename(enabled=locale_str("enabled"))
+    async def events(self, interaction: discord.Interaction, enabled: bool) -> None:
+        lang = self._admin_only(interaction)
+        if enabled and not interaction.guild.me.guild_permissions.manage_events:
+            raise UserFacingError("The bot is missing the Manage Events permission")
+        self.bot.guild_settings.update(interaction.guild.id, scheduled_events=enabled)
+        text = t("Scheduled events turned on", lang) if enabled else t("Scheduled events turned off", lang)
+        await reply(interaction, embed=notice_embed(text, SUCCESS), ephemeral=True)

@@ -1,6 +1,7 @@
 """Discord components shared by the commands."""
 
 import contextlib
+from collections.abc import Awaitable, Callable, Collection, Sequence
 
 import discord
 
@@ -9,6 +10,7 @@ from apbot.ui.embeds import notice_embed
 from apbot.ui.respond import reply
 
 CONFIRM_TIMEOUT = 60  # seconds
+SELECT_TIMEOUT = 300
 
 
 class OpenInManagerButton(discord.ui.Button):
@@ -35,14 +37,27 @@ def open_in_manager_view(site_url: str | None, path: str, lang: str) -> discord.
     return view
 
 
-class ConfirmView(discord.ui.View):
+class AuthorView(discord.ui.View):
+    """A view that only the person who asked can use; anyone else is told it is not theirs."""
+
+    def __init__(self, author_id: int, lang: str, *, timeout: float):
+        super().__init__(timeout=timeout)
+        self._author_id = author_id
+        self._lang = lang
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id == self._author_id:
+            return True
+        await reply(interaction, embed=notice_embed(t("This question is not for you.", self._lang)), ephemeral=True)
+        return False
+
+
+class ConfirmView(AuthorView):
     """Confirm and Cancel buttons that only the person who asked can press. `ask` shows them and tells the answer."""
 
     def __init__(self, author_id: int, lang: str, *, confirm_label: str, danger: bool = False):
-        super().__init__(timeout=CONFIRM_TIMEOUT)
+        super().__init__(author_id, lang, timeout=CONFIRM_TIMEOUT)
         self.confirmed: bool | None = None  # None until answered
-        self._author_id = author_id
-        self._lang = lang
         style = discord.ButtonStyle.danger if danger else discord.ButtonStyle.primary
         confirm = discord.ui.Button(label=confirm_label, style=style)
         confirm.callback = self._on_confirm
@@ -50,12 +65,6 @@ class ConfirmView(discord.ui.View):
         cancel.callback = self._on_cancel
         self.add_item(confirm)
         self.add_item(cancel)
-
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
-        if interaction.user.id == self._author_id:
-            return True
-        await reply(interaction, embed=notice_embed(t("This question is not for you.", self._lang)), ephemeral=True)
-        return False
 
     async def _on_confirm(self, interaction: discord.Interaction) -> None:
         self.confirmed = True
@@ -78,3 +87,37 @@ class ConfirmView(discord.ui.View):
                     embed=notice_embed(t("This question expired. Run the command again.", self._lang)), view=None
                 )
         return bool(self.confirmed)
+
+
+class MultiSelectView(AuthorView):
+    """A drop-down in which the person ticks any number of options (none included). Choosing saves at once: `save`
+    gets the interaction and the chosen values and returns the embed that replaces the message."""
+
+    def __init__(
+        self,
+        author_id: int,
+        lang: str,
+        options: Sequence[tuple[str, str]],
+        selected: Collection[str],
+        save: Callable[[discord.Interaction, list[str]], Awaitable[discord.Embed]],
+        *,
+        placeholder: str,
+    ):
+        super().__init__(author_id, lang, timeout=SELECT_TIMEOUT)
+        self._save = save
+        self.select = discord.ui.Select(
+            placeholder=placeholder,
+            min_values=0,
+            max_values=len(options),
+            options=[discord.SelectOption(label=label, value=value, default=value in selected) for value, label in options],
+        )
+        self.select.callback = self._on_select
+        self.add_item(self.select)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item) -> None:
+        await interaction.client.on_app_command_error(interaction, error)  # one place decides what the person is told
+
+    async def _on_select(self, interaction: discord.Interaction) -> None:
+        embed = await self._save(interaction, list(self.select.values))
+        await interaction.response.edit_message(embed=embed, view=None)
+        self.stop()

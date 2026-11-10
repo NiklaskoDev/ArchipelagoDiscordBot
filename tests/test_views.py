@@ -103,7 +103,7 @@ def test_views_hold_exactly_the_whitelisted_fields():
     """Adding a field to a public view has to be a deliberate change: this list is the whitelist."""
     summary = {
         "id", "name", "state", "world_count", "player_count", "claimed_count", "goal_count", "address", "tls",
-        "ap_version", "start_at", "created_at", "finished_at", "outcome",
+        "ap_version", "start_at", "created_at", "finished_at", "outcome", "visibility",
     }
     assert {f.name for f in dataclasses.fields(GameSummary)} == summary
     assert {f.name for f in dataclasses.fields(GameDetail)} == summary | {"slots", "checked", "total"}
