@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -12,10 +13,15 @@ from fakes import (
     by_token,
     entry,
     game_json,
+    hint_json,
+    tracker_json,
 )
 
 from apbot.access import Access
 from apbot.cogs.games import GamesCog
+from apbot.cogs.linking import LinkingCog
+from apbot.manager.views import FeedEntry
+from apbot.services.feeds import FeedGame
 from apbot.ui.dynamic import HandoverAcceptButton, HandoverDeclineButton
 
 GUILD, CHANNEL = 5000, 100
@@ -274,3 +280,26 @@ async def test_a_stopped_token_is_told_to_the_person_once(live, bot, manager):
     [dm] = live.dms
     assert dm.kwargs["embed"].description == "Your manager token stopped working. Make a new one and run /link again"
     assert bot.links.get(1001).status == "invalid"
+
+
+async def test_unlinking_and_linking_again_makes_the_bot_read_the_persons_hints_afresh(live, bot, manager):
+    game = FeedGame(7, "Friday Run", "running", True)
+    chat = [FeedEntry(1, 0.0, "chat", {"player": "B", "text": "x"})]
+    item_entry = FeedEntry(2, 0.0, "item", {"finder": "Bob", "item": "Sword", "receiver": "Alice", "location": "Chest"})
+    live.games()
+    bot.alert_prefs.replace(1001, ["hint_found"])
+    manager.add("GET", "/api/games/7/slots/1/tracker", by_token({USER_TOKEN: tracker_json([])}))
+    await bot.user_sync.sync_user(bot.links.get(1001))
+    await bot.alerts.handle(game, tuple(chat))  # the list is read: no hints yet
+    interaction = FakeInteraction(bot, user_id=1001)
+    task = asyncio.create_task(LinkingCog(bot).unlink.callback(LinkingCog(bot), interaction))
+    for _ in range(10):
+        await asyncio.sleep(0)
+    await interaction.messages[0]["view"].children[0].callback(FakeInteraction(bot, user_id=1001))
+    await task
+    bot.links.save(1001, 10, "alice", bot.cipher.encrypt(USER_TOKEN), USER_TOKEN[-4:], "en")
+    bot.alert_prefs.replace(1001, ["hint_found"])
+    await bot.user_sync.sync_user(bot.links.get(1001))
+    manager.add("GET", "/api/games/7/slots/1/tracker", by_token({USER_TOKEN: tracker_json([hint_json("Sword", "Alice", "Bob", "Chest")])}))
+    await bot.alerts.handle(game, (item_entry,))
+    assert len(live.dms) == 1

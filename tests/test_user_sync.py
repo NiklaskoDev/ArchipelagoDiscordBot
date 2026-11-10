@@ -201,3 +201,43 @@ async def test_participants_slots_and_known_games_come_from_the_latest_look(bot,
     assert sync.known_games()[7].name == "Private run"
     sync.forget(1001)
     assert list(sync.participants(7)) == [2002]
+
+
+# --- people whose link stops working lose their game roles --------------------------------------------------------------
+async def test_a_refused_token_tells_the_listener_the_person_plays_in_nothing_now(bot, manager, sync):
+    the_link = link(bot)
+    games(manager, game_json(7, my_slots=MINE))
+    await sync.sync_user(the_link)
+    manager.add("GET", "/api/games", (401, {"detail": "nope"}))
+    await sync.sync_user(the_link)
+    assert sync.heard.memberships[-1] == (1001, frozenset())
+
+
+async def test_a_link_deleted_outside_unlink_tells_the_listener_too(bot, manager, sync):
+    the_link = link(bot)
+    games(manager, game_json(7, my_slots=MINE))
+    await sync.sync_user(the_link)
+    bot.links.delete(1001)
+    await sync.run_once()
+    assert sync.heard.memberships[-1] == (1001, frozenset())
+
+
+async def test_a_token_that_cannot_be_decrypted_tells_the_listener_too(bot, manager, sync):
+    from cryptography.fernet import Fernet
+
+    from apbot.crypto import TokenCipher
+
+    the_link = link(bot)
+    games(manager, game_json(7, my_slots=MINE))
+    await sync.sync_user(the_link)
+    bot.access._cipher = TokenCipher([Fernet.generate_key().decode()])  # the key changed
+    await sync.sync_user(bot.links.get(1001))
+    assert sync.heard.memberships[-1] == (1001, frozenset())
+    assert bot.links.get(1001).status == "invalid"
+
+
+async def test_someone_never_seen_is_not_announced_as_leaving(bot, manager, sync):
+    bot.links.save(1001, 10, "alice", b"cipher", "abcd", "en")
+    bot.links.mark_invalid(1001)
+    await sync.run_once()
+    assert sync.heard.memberships == []

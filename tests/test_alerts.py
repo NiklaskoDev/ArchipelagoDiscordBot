@@ -296,7 +296,8 @@ async def test_hints_for_other_people_and_found_ones_are_not_open_hints(make_eng
         hint_json("Sword", "Alice", "Bob", "Chest", found=True),
         hint_json("Bow", "Alice", "Bob", "Cave", for_me=False, in_my_world=True),
     )
-    await live.engine.handle(GAME, (item(), item(name="Bow", location="Cave", seq=2)))
+    await live.engine.handle(GAME, (feed_entry("chat", player="B", text="hi"),))  # the list is read
+    await live.engine.handle(GAME, (item(seq=2), item(name="Bow", location="Cave", seq=3)))
     assert live.dms == []
 
 
@@ -438,3 +439,61 @@ async def test_a_stopped_token_is_told_once_in_the_persons_language_whatever_the
     [message] = live.dms
     assert message.kwargs["embed"].description == "Ton jeton du manager ne fonctionne plus. Crée-en un nouveau et relance /link"
     assert USER_TOKEN not in json_text(message.kwargs["embed"])
+
+
+# --- the open-hint list is kept honest ---------------------------------------------------------------------------------
+async def test_a_hint_made_while_hint_alerts_were_off_is_not_missed_after_turning_them_on(bot, make_engine):
+    live = make_engine("hint_found")
+    await live.play()
+    live.tracker()
+    await live.engine.handle(GAME, (feed_entry("chat", player="B", text="hi"),))  # the list is read: no hints
+    bot.alert_prefs.replace(1001, ["item_received"])
+    await live.engine.handle(GAME, (feed_entry("chat", seq=2, player="B", text="hi"),))
+    live.tracker(hint_json("Sword", "Alice", "Bob", "Chest"))  # a hint is made while the alert is off
+    bot.alert_prefs.replace(1001, ["hint_found"])
+    await live.engine.handle(GAME, (feed_entry("chat", seq=3, player="B", text="hi"),))
+    await live.engine.handle(GAME, (item(seq=4),))
+    assert [m.kwargs["embed"].description for m in live.dms] == [
+        "Your hint was found: Sword for **Alice** at Chest in **Bob**'s world"
+    ]
+
+
+async def test_a_slot_the_person_gains_later_is_read_too(make_engine):
+    live = make_engine("hint_found")
+    await live.play()
+    live.tracker()
+    await live.engine.handle(GAME, (feed_entry("chat", player="B", text="hi"),))
+    both = MINE + [{"slot": 4, "name": "Alice2", "game": "Zelda", "idle_since": None}]
+    await live.play(game_json(7, "Friday Run", my_slots=both))  # e.g. after taking a slot over
+    live.tracker(hint_json("Bow", "Alice2", "Bob", "Cave"), slot=4)
+    await live.engine.handle(GAME, (item(receiver="Alice2", name="Bow", location="Cave", seq=2),))
+    assert len(live.dms) == 1 and "Bow for **Alice2**" in live.dms[0].kwargs["embed"].description
+
+
+async def test_forgetting_a_person_makes_the_next_batch_read_their_hints_again(make_engine):
+    live = make_engine("hint_found")
+    await live.play()
+    live.tracker()
+    await live.engine.handle(GAME, (feed_entry("chat", player="B", text="hi"),))
+    live.tracker(hint_json("Sword", "Alice", "Bob", "Chest"))
+    await live.engine.handle(GAME, (item(seq=2),))
+    assert live.dms == []  # still the old list
+    live.engine.forget(1001)
+    await live.engine.handle(GAME, (item(seq=3),))
+    assert len(live.dms) == 1
+
+
+async def test_a_hint_that_is_fulfilled_in_the_batch_that_seeds_the_list_still_alerts(make_engine):
+    live = make_engine("hint_found")
+    await live.play()
+    live.tracker(hint_json("Sword", "Alice", "Bob", "Chest", found=True))  # the tracker is read after the batch
+    await live.engine.handle(GAME, (item(),))
+    assert len(live.dms) == 1
+
+
+async def test_a_hint_that_was_found_long_before_does_not_alert_in_the_seeding_batch(make_engine):
+    live = make_engine("hint_found")
+    await live.play()
+    live.tracker(hint_json("Sword", "Alice", "Bob", "Chest", found=True))
+    await live.engine.handle(GAME, (feed_entry("chat", player="B", text="hi"), item(name="Bow", location="Cave", seq=2)))
+    assert live.dms == []

@@ -117,11 +117,19 @@ class UserSync:
     def forget(self, discord_id: int) -> None:
         self._states.pop(discord_id, None)
 
+    async def _drop(self, discord_id: int) -> None:
+        """Forgets a person whose link no longer works, and tells the listener they play in nothing now (their game
+        roles go), if they were known."""
+        known = discord_id in self._states
+        self.forget(discord_id)
+        if known and self._on_memberships:
+            await self._on_memberships(discord_id, frozenset())
+
     # --- looking ---------------------------------------------------------------------------------------------------
     async def run_once(self) -> None:
         links = self._links.all_active()
         for stale in set(self._states) - {link.discord_user_id for link in links}:
-            self.forget(stale)
+            await self._drop(stale)
         for link in links:
             try:
                 await self.sync_user(link)
@@ -133,13 +141,13 @@ class UserSync:
         discord_id = link.discord_user_id
         token = self._access.stored_token(link)
         if token is None:
-            self.forget(discord_id)
+            await self._drop(discord_id)
             return
         try:
             games = parse_user_games(await self._client.list_games(token))
         except TokenInvalid:
             self._access.on_token_invalid(discord_id)
-            self.forget(discord_id)
+            await self._drop(discord_id)
             if self._on_token_stopped:
                 await self._on_token_stopped(link)
             return

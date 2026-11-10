@@ -165,13 +165,22 @@ class AlertEngine:
         self._fetch_user = fetch_user
         self._now = now
         self._muted_until: dict[int, float] = {}
-        self._hints: dict[tuple[int, int], set[HintKey]] = {}  # (person, game) -> their hints that are not found yet
+        # (person, game) -> the slot names it was read for, and their hints that are not found yet
+        self._hints: dict[tuple[int, int], tuple[frozenset[str], set[HintKey]]] = {}
+
+    def forget(self, discord_id: int) -> None:
+        """Drops what is remembered about a person's hints (they unlinked, or their token stopped working): it would
+        be out of date by the time they are back."""
+        for key in [key for key in self._hints if key[0] == discord_id]:
+            del self._hints[key]
 
     # --- from the activity feed --------------------------------------------------------------------------------------
     async def handle(self, game: FeedGame, entries: tuple[FeedEntry, ...]) -> None:
         """What happened in a game, for each linked person who plays in it and asked to hear about it."""
         for discord_id, slots in self._user_sync.participants(game.id).items():
             enabled = self._prefs.enabled(discord_id)
+            if HINT_FOUND not in enabled:
+                self.forget(discord_id)  # the feed is not followed for them now, so the list would go stale
             link = self._links.get(discord_id)
             if link is None or not enabled & FEED_ALERTS:
                 continue
@@ -183,7 +192,7 @@ class AlertEngine:
         entries: tuple[FeedEntry, ...],
     ) -> list[Alert]:
         names = frozenset(slot.name for slot in slots)
-        open_hints = await self._open_hints(link, game, slots) if HINT_FOUND in enabled else None
+        open_hints = await self._open_hints(link, game, slots, entries) if HINT_FOUND in enabled else None
         alerts: list[Alert] = []
         for entry in entries:
             waiting = ()
@@ -195,19 +204,39 @@ class AlertEngine:
                 _keep_hints_current(open_hints, entry, names)
         return alerts
 
-    async def _open_hints(self, link: UserLink, game: FeedGame, slots: tuple[SlotRef, ...]) -> set[HintKey] | None:
-        """The person's hints that are not found yet: read from their trackers the first time, then kept current from
-        the feed. None when the manager could not tell (the next batch tries again)."""
+    async def _open_hints(
+        self, link: UserLink, game: FeedGame, slots: tuple[SlotRef, ...], entries: tuple[FeedEntry, ...]
+    ) -> set[HintKey] | None:
+        """The person's hints that are not found yet: read from their trackers the first time (and again when their
+        slots changed), then kept current from the feed. None when the manager could not tell (the next batch tries
+        again)."""
         key = (link.discord_user_id, game.id)
-        if key not in self._hints:
-            seeded: set[HintKey] = set()
-            for slot in slots:
-                hints = await self._tracker_hints(link, game.id, slot)
-                if hints is None:
-                    return None
-                seeded |= {(h.receiver, h.item, h.finder, h.location) for h in hints if h.for_me and not h.found}
-            self._hints[key] = seeded
-        return self._hints[key]
+        names = frozenset(slot.name for slot in slots)
+        if key not in self._hints or self._hints[key][0] != names:
+            seeded = await self._seed(link, game, slots, entries)
+            if seeded is None:
+                return None
+            self._hints[key] = (names, seeded)
+        return self._hints[key][1]
+
+    async def _seed(
+        self, link: UserLink, game: FeedGame, slots: tuple[SlotRef, ...], entries: tuple[FeedEntry, ...]
+    ) -> set[HintKey] | None:
+        """The tracker is read after `entries` were fetched, so a hint they fulfil already shows as found there. Those
+        stay open for this batch, or their alert would be lost."""
+        arriving = {hint_key(entry) for entry in entries if entry.kind == "item"}
+        seeded: set[HintKey] = set()
+        for slot in slots:
+            hints = await self._tracker_hints(link, game.id, slot)
+            if hints is None:
+                return None
+            for hint in hints:
+                if not hint.for_me:
+                    continue
+                hint_id = (hint.receiver, hint.item, hint.finder, hint.location)
+                if not hint.found or hint_id in arriving:
+                    seeded.add(hint_id)
+        return seeded
 
     async def _items_waiting_for(
         self, link: UserLink, game: FeedGame, slots: tuple[SlotRef, ...], player: str
@@ -246,6 +275,7 @@ class AlertEngine:
 
     async def token_stopped(self, link: UserLink) -> None:
         """Tells a person, once, that the manager stopped accepting their token (they never have to have asked)."""
+        self.forget(link.discord_user_id)
         await self._send(link.discord_user_id, embed=notice_embed(t(TOKEN_STOPPED_TEXT, link.locale)))
 
     # --- sending -----------------------------------------------------------------------------------------------------
