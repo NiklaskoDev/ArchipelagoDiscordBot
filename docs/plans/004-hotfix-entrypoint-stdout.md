@@ -1,7 +1,7 @@
 # 004 — hotfix: entrypoint ownership message pollutes the command's stdout
 
-Status: draft
-Version: 0.1.0 → 0.1.1 (0.1.0 not yet released; the line goes under `[Unreleased]` → `### Fixed`)
+Status: done
+Version: no bump (0.1.0 not yet released; the line goes under `[Unreleased]` → `### Fixed`)
 Gate (fix only · no API/format change · no migration or new dependency · ≤ 3 source files · no critical decision): holds
 
 Symptom: CI jobs "Build image (amd64)" and "Build image (arm64)" fail at step "Smoke test the image" (`.github/workflows/ci.yml:71-78`). `uid` captures two lines (`Fixing ownership of /data for 99:100` and `99`), so `test "$uid" = "99"` exits 1. Present on `main` since the entrypoint was added (0.1.0, unreleased).
