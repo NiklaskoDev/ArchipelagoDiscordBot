@@ -85,3 +85,15 @@ def test_the_timeout_is_a_minute():
 
 async def _timeout():
     return make().timeout
+
+
+async def test_a_question_asked_after_the_command_was_deferred_is_a_private_follow_up():
+    view = make()
+    interaction = FakeInteraction(user_id=1001)
+    await interaction.response.defer(ephemeral=True)  # the command asked the manager first
+    task = asyncio.create_task(view.ask(interaction, discord.Embed(description="Sure?")))
+    await let_tasks_run()
+    [message] = interaction.followup.sent
+    assert message["ephemeral"] is True and message["view"] is view and interaction.response.sent == []
+    await view.children[0].callback(FakeInteraction(user_id=1001))
+    assert await task is True

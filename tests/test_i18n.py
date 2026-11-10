@@ -186,3 +186,26 @@ async def test_commands_limited_to_organizers_only_work_in_a_server(tmp_path, ma
         assert payloads[name]["dm_permission"] is False, name
     for name in ("games", "game", "signups", "wake", "link", "unlink", "mydata"):
         assert payloads[name]["dm_permission"] is True, name
+
+
+async def test_the_player_tools_exist_with_their_options_and_work_in_direct_messages_too(tmp_path, manager):
+    payloads = {p["name"]: p for p in await command_payloads(tmp_path, manager)}
+    for name in ("tracker", "hints", "hint", "hint_location", "remaining", "say", "release", "collect", "status", "claim"):
+        assert payloads[name]["dm_permission"] is True, name
+    options = {name: [o["name"] for o in payloads[name]["options"]] for name in payloads}
+    assert options["hint"] == ["game", "item", "slot"] and options["hint_location"] == ["game", "location", "slot"]
+    assert options["say"] == ["game", "text", "slot"] and options["claim"] == ["game", "slot"]
+    assert options["status"] == ["game", "status", "slot", "note"] and options["tracker"] == ["game", "slot"]
+    assert [o["name"] for o in payloads["handover"]["options"]] == ["offer", "cancel"]
+    offer = payloads["handover"]["options"][0]
+    assert [o["name"] for o in offer["options"]] == ["game", "slot", "member", "username", "note"]
+    choices = [c["name"] for c in next(o for o in payloads["status"]["options"] if o["name"] == "status")["choices"]]
+    assert choices == ["playing", "stuck", "away", "clear"]
+
+
+async def test_the_slot_option_is_optional_and_the_game_option_is_required(tmp_path, manager):
+    payloads = {p["name"]: p for p in await command_payloads(tmp_path, manager)}
+    for name in ("tracker", "hints", "hint", "remaining", "say", "release", "collect", "status"):
+        required = {o["name"]: o.get("required", False) for o in payloads[name]["options"]}
+        assert required["game"] is True and required["slot"] is False, name
+    assert {o["name"]: o["required"] for o in payloads["claim"]["options"]}["slot"] is True

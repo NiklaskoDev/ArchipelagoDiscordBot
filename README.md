@@ -72,6 +72,25 @@ The bot reads each game's activity feed from the manager every few seconds while
 If the manager also posts to a Discord webhook (game online, stuck, hand-over), turn that off for the channels the bot
 posts in, or every message appears twice.
 
+### Player tools
+
+For people who played in a game and linked their account. Replies are private. Every command takes `game:` and, if you
+have more than one slot in that game, `slot:`; the manager only lets you act for your own slots. Giving hints, saying
+things and releasing need a token with access *Read and change*.
+
+| Command | What |
+|---|---|
+| `/tracker`, `/hints` | What your slot has received and checked, hint points, whether release and collect are possible, and your open hints. Pick a hint from the list to mark it as priority, no priority or avoid. |
+| `/hint item:`, `/hint_location location:` | Asks the game's server for a hint, as you. Names are suggested once the first suggestion has loaded them. |
+| `/remaining`, `/say text:` | Asks the server what you still have to find, or says something in the game's chat as your slot. |
+| `/release`, `/collect` | Releases the remaining items of your world, or collects what other worlds hold for you, after a confirmation and only when the game's rules allow it now. |
+| `/status status: note:` | Tells the others whether you are playing, stuck or away (or clears it). |
+| `/claim game: slot:` | Claims a free slot in a game that allows it. |
+| `/handover offer`, `/handover cancel` | Offers one of your slots to a Discord member who linked their account, to a manager username, or to anyone; or takes the offer back. |
+
+These commands start a text client connection for you on the manager, so the game's server may announce that you joined
+and left. That is why joins and leaves are off in game threads by default.
+
 ## Setup
 
 ### 1. A Discord application

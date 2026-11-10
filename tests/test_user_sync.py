@@ -241,3 +241,16 @@ async def test_someone_never_seen_is_not_announced_as_leaving(bot, manager, sync
     bot.links.mark_invalid(1001)
     await sync.run_once()
     assert sync.heard.memberships == []
+
+
+async def test_the_games_of_a_person_are_those_they_play_in_ongoing_ones_first(bot, manager, sync):
+    games(
+        manager,
+        game_json(1, "Old", my_slots=MINE, finished_at=5.0),
+        game_json(2, "Mine", my_slots=MINE),
+        game_json(3, "Not mine"),
+        game_json(4, "Newer", my_slots=MINE),
+    )
+    await sync.sync_user(link(bot))
+    assert [g.name for g in sync.games_of(1001)] == ["Newer", "Mine", "Old"]
+    assert sync.games_of(9999) == []
