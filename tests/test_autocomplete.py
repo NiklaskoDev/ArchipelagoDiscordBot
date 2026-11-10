@@ -234,3 +234,18 @@ async def test_a_broken_link_means_public_choices_only(bot, manager):
     await two_views(bot, manager, user=[hidden()])
     assert [c.value for c in await game_choices_visible(FakeInteraction(bot), "")] == ["1"]
     assert manager.requests == []
+
+
+async def test_the_personal_list_for_suggestions_is_asked_quick(bot, manager):
+    link(bot)
+    await two_views(bot, manager, user=[hidden()])
+    asked = []
+    real = bot.my_games.games
+
+    async def spy(owner, token, *, quick=False):
+        asked.append(quick)
+        return await real(owner, token, quick=quick)
+
+    bot.my_games.games = spy
+    await game_choices_visible(FakeInteraction(bot), "")
+    assert asked == [True]
