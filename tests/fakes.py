@@ -152,6 +152,44 @@ def signup_json(signup_id: int = 1, name: str = "Spring Async", **overrides) -> 
     return {**signup, **overrides}
 
 
+def entry_json(entry_id: int = 1, name: str = "alice.yaml", mine: bool = True, **overrides) -> dict:
+    """An entry of a round as the manager sends it; `name`, `config_id` and `generation_error` only to its owner and
+    to the round's organizer (pass `name=None` for what a player sees of someone else's entry)."""
+    entry = {
+        "id": entry_id, "user_id": 7, "username": "alice", "mine": mine, "player_names": ["Alice"],
+        "games": ["Timespinner"], "slots": 1, "missing_games": [], "missing_roms": [], "issues": [],
+        "created_at": 1_700_000_000.0, "updated_at": 1_700_000_000.0, "name": name, "config_id": 40 + entry_id,
+        "outdated": False, "generation_error": None,
+    }
+    entry = {**entry, **overrides}
+    if entry["name"] is None:  # someone else's entry: the manager leaves these out
+        for key in ("name", "config_id", "outdated", "generation_error"):
+            entry.pop(key)
+    return entry
+
+
+def signup_detail_json(signup_id: int = 1, name: str = "Spring Async", entries=(), **overrides) -> dict:
+    """The manager's answer to GET /api/signups/{id}, with the fields only an organizer gets under `overrides`."""
+    detail = signup_json(
+        signup_id, name, mystery=False, mystery_weights=None, my_slot_count=0, auto_generate=True, options={},
+        game_id=None, job_id=None, error=None, test=None, entries=list(entries), configs_per_user=2,
+    )
+    return {**detail, **overrides}
+
+
+def config_json(config_id: int = 40, name: str = "alice.yaml", **overrides) -> dict:
+    config = {"id": config_id, "user_id": 7, "name": name, "games": ["Timespinner"], "player_names": ["Alice"],
+              "description": None, "size": 100, "shared": False, "missing_games": [], "missing_roms": []}
+    return {**config, **overrides}
+
+
+def check_json(ok: bool = True, **overrides) -> dict:
+    check = {"ok": ok, "errors": [], "warnings": [],
+             "players": [{"name": "Alice", "games": ["Timespinner"], "errors": [], "warnings": []}],
+             "missing_roms": []}
+    return {**check, **overrides}
+
+
 # ---------------------------------------------------------------------------------------------------------------------
 # Discord
 # ---------------------------------------------------------------------------------------------------------------------
@@ -461,6 +499,23 @@ class FakeChannel:
 
     def permissions_for(self, member) -> discord.Permissions:
         return self._permissions
+
+
+class FakeAttachment:
+    """An uploaded file: its name, the size Discord reports and the bytes a download gives."""
+
+    def __init__(self, filename: str = "alice.yaml", data: bytes = b"name: Alice\ngame: Timespinner\n", size=None):
+        self.filename = filename
+        self._data = data
+        self.size = len(data) if size is None else size
+        self.reads = 0
+        self.fail_with: Exception | None = None
+
+    async def read(self) -> bytes:
+        self.reads += 1
+        if self.fail_with:
+            raise self.fail_with
+        return self._data
 
 
 class FakeInteraction:

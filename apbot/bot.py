@@ -29,6 +29,7 @@ from apbot.db.live import (
     OverviewStore,
     ScheduledEventStore,
 )
+from apbot.db.reminders import ReminderStore
 from apbot.errors import user_message
 from apbot.heartbeat import HEARTBEAT_INTERVAL, Heartbeat
 from apbot.i18n import BotTranslator, language_of, t
@@ -41,6 +42,8 @@ from apbot.services.manager_watch import RETRY_INTERVAL, ManagerWatch, StartupFa
 from apbot.services.overview import OVERVIEW_INTERVAL, Overview
 from apbot.services.relay import MAINTAIN_INTERVAL, Relay
 from apbot.services.scheduler import Periodic, StopPeriodic
+from apbot.services.signup_directory import SignupDirectory
+from apbot.services.signup_reminders import REMINDER_INTERVAL, SignupReminders
 from apbot.services.slots import SlotDirectory
 from apbot.services.text_client import TextClientBridge
 from apbot.services.user_sync import SYNC_INTERVAL, UserSync
@@ -74,6 +77,7 @@ class ApBot(commands.Bot):
         self._event_store = ScheduledEventStore(self.db)
         self.user_sync = UserSync(self.links, self.access, self.manager)
         self.slots = SlotDirectory(self.manager)
+        self.signup_directory = SignupDirectory(self.manager)
         self.text_client = TextClientBridge(self.manager)
         self.relay = Relay(
             self, self.spaces, self.guild_settings, self.cache, self.manager, config.manager_api_token,
@@ -91,6 +95,10 @@ class ApBot(commands.Bot):
         )
         self.events = Events(
             self, self._event_store, self.guild_settings, self.cache, self.manager, config.manager_api_token
+        )
+        self._reminder_store = ReminderStore(self.db)
+        self.reminders = SignupReminders(
+            self, self._reminder_store, self.guild_settings, self.cache, self.manager, config.manager_api_token
         )
         self.user_sync.listen(
             on_events=self.alerts.handle_events,
@@ -110,6 +118,7 @@ class ApBot(commands.Bot):
             Periodic("relay", MAINTAIN_INTERVAL, self.relay.maintain),
             Periodic("overview", OVERVIEW_INTERVAL, self.overview.run),
             Periodic("events", EVENTS_INTERVAL, self.events.sync),
+            Periodic("signup-reminders", REMINDER_INTERVAL, self.reminders.run),
         ]
         self.tree.on_error = self.on_app_command_error
 
@@ -165,6 +174,7 @@ class ApBot(commands.Bot):
         self.spaces.delete_guild(guild.id)
         self._overview_store.delete_guild(guild.id)
         self._event_store.delete_guild(guild.id)
+        self._reminder_store.delete_guild(guild.id)
 
     async def on_guild_role_delete(self, role: discord.Role) -> None:
         """A deleted organizer or admin role must not stay configured: nobody could hold it, so /start, /stop and

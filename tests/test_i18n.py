@@ -22,7 +22,7 @@ COMMAND_NAME = re.compile(r"^[-_\w]{1,32}$")
 NAME_LIKE = re.compile(r"^[a-z0-9_-]{1,32}$")  # an English text that is a command, option or choice name
 MAX_DESCRIPTION = 100
 SAME_IN_EVERY_LANGUAGE = {
-    "**{player}**: {message}", "Chat", "Hints", "Manager", "Offline", "Online", "Server: {message}", "Slots", "Status", "Token",
+    "**{player}**: {message}", "{count} slot", "{count} slots", "Chat", "Hints", "Manager", "Offline", "Online", "Server: {message}", "Slots", "Status", "Token",
     "Version",
 }
 
@@ -124,7 +124,7 @@ async def command_payloads(tmp_path, manager) -> list[dict]:
 
 
 COMMAND_NAMES = {
-    "games", "game", "signups", "wake", "start", "stop", "restart", "link", "unlink", "mydata", "setup", "alerts",
+    "games", "game", "signups", "signup", "wake", "start", "stop", "restart", "link", "unlink", "mydata", "setup", "alerts",
     "tracker", "hints", "hint", "hint_location", "remaining", "say", "release", "collect", "status", "claim", "handover",
 }
 LOCALES = {"de", "fr", "nl"}
@@ -209,3 +209,27 @@ async def test_the_slot_option_is_optional_and_the_game_option_is_required(tmp_p
         required = {o["name"]: o.get("required", False) for o in payloads[name]["options"]}
         assert required["game"] is True and required["slot"] is False, name
     assert {o["name"]: o["required"] for o in payloads["claim"]["options"]}["slot"] is True
+
+
+async def test_the_signup_commands_have_their_options_limits_and_suggestions(tmp_path, manager):
+    payloads = {p["name"]: p for p in await command_payloads(tmp_path, manager)}
+    signup = payloads["signup"]
+    subcommands = {option["name"]: option for option in signup["options"]}
+    assert {name: [o["name"] for o in sub["options"]] for name, sub in subcommands.items()} == {
+        "show": ["round"],
+        "join": ["round", "file", "config"],
+        "withdraw": ["round", "entry"],
+        "open": ["name", "deadline", "slots_per_user", "description"],
+        "close": ["round"],
+        "test": ["round"],
+    }
+    options = {name: {o["name"]: o for o in sub["options"]} for name, sub in subcommands.items()}
+    assert all(options[name]["round"].get("autocomplete") for name in ("show", "join", "withdraw", "close", "test"))
+    assert options["join"]["config"]["autocomplete"] and options["withdraw"]["entry"]["autocomplete"]
+    assert options["join"]["file"]["type"] == 11  # an attachment
+    assert not options["join"]["file"].get("required") and not options["join"]["config"].get("required")
+    assert options["open"]["name"]["required"] is True and not options["open"]["deadline"].get("required")
+    slots = options["open"]["slots_per_user"]
+    assert (slots["min_value"], slots["max_value"]) == (1, 20) and not slots.get("required")
+    assert options["open"]["description"]["max_length"] == 2000 and options["open"]["name"]["max_length"] == 120
+    assert signup["dm_permission"] is True  # show, join and withdraw work in direct messages; the others check the server

@@ -153,6 +153,7 @@ class SlotsCog(commands.Cog):
     def _recipient(self, member: discord.User | discord.Member | None, username: str | None) -> str | None:
         """The manager username to offer the slot to: that of the member's linked account, the one typed, or None for
         an offer to whoever takes it."""
+        username = (username or "").strip() or None  # a blank username is no username
         if member is not None and username is not None:
             raise UserFacingError("Choose either a member or a username, not both")
         if member is not None:
@@ -160,4 +161,4 @@ class SlotsCog(commands.Cog):
             if link is None:
                 raise UserFacingError("{member} has not linked a manager account", member=f"<@{member.id}>")
             return link.manager_username
-        return username.strip() if username is not None else None
+        return username

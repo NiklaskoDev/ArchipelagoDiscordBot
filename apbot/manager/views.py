@@ -82,6 +82,70 @@ class SignupSummary:
     user_count: int
     slots_per_user: int
     creator: str | None
+    status: str = "open"  # open, closed, generating, done
+    can_manage: bool = False  # for the account that asked: may it close and test the round
+
+
+@dataclass(frozen=True)
+class EntryView:
+    """One config entered in a round. `name`, `generation_error` are only sent for the asker's own entries and to the
+    round's organizer; the other entries of a round are not shown to players at all."""
+
+    id: int
+    mine: bool
+    username: str | None
+    name: str | None
+    config_id: int | None  # the saved config the entry was made from
+    games: tuple[str, ...]
+    slots: int
+    issues: tuple[str, ...]
+    generation_error: str | None
+
+
+@dataclass(frozen=True)
+class RoundTest:
+    """The latest test of a round (only sent to its organizer). `current` is False when the entries changed after it."""
+
+    status: str  # queued, running, succeeded, failed, cancelled
+    current: bool
+    error: str | None
+
+
+@dataclass(frozen=True)
+class SignupDetail(SignupSummary):
+    description: str | None = None
+    allowed_games: tuple[str, ...] = ()
+    mystery: bool = False
+    my_slot_count: int = 0
+    error: str | None = None  # why the last generation failed (organizer only)
+    entries: tuple[EntryView, ...] = ()
+    test: RoundTest | None = None
+
+
+@dataclass(frozen=True)
+class ConfigView:
+    id: int
+    name: str
+    games: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PlayerCheck:
+    name: str
+    games: tuple[str, ...]
+    errors: tuple[str, ...]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CheckResult:
+    """What the manager says about a config without generating it."""
+
+    ok: bool
+    errors: tuple[str, ...]
+    warnings: tuple[str, ...]
+    players: tuple[PlayerCheck, ...]
+    missing_roms: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -261,6 +325,83 @@ def parse_signup(raw: Mapping) -> SignupSummary:
         user_count=_int(raw.get("user_count")),
         slots_per_user=_int(raw.get("slots_per_user"), 1),
         creator=_text(raw.get("creator")),
+        status=_text(raw.get("status")) or "open",
+        can_manage=bool(raw.get("can_manage")),
+    )
+
+
+def _texts(value: Any) -> tuple[str, ...]:
+    return tuple(item for item in value if isinstance(item, str) and item) if isinstance(value, list) else ()
+
+
+def _entry_view(raw: Any) -> EntryView | None:
+    if not isinstance(raw, Mapping) or _int(raw.get("id"), -1) < 0:
+        return None
+    return EntryView(
+        id=raw["id"],
+        mine=bool(raw.get("mine")),
+        username=_text(raw.get("username")),
+        name=_text(raw.get("name")),
+        config_id=_optional_int(raw.get("config_id")),
+        games=_texts(raw.get("games")),
+        slots=_int(raw.get("slots"), 1),
+        issues=_texts(raw.get("issues")),
+        generation_error=_text(raw.get("generation_error")),
+    )
+
+
+def _round_test(raw: Any) -> RoundTest | None:
+    if not isinstance(raw, Mapping) or not _text(raw.get("status")):
+        return None
+    return RoundTest(status=raw["status"], current=bool(raw.get("current")), error=_text(raw.get("error")))
+
+
+def parse_signup_detail(raw: Mapping) -> SignupDetail:
+    """A round with its entries, as the asker may see them. Raises ValueError when the answer is not a round."""
+    summary = parse_signup(raw)
+    entries = raw.get("entries") if isinstance(raw.get("entries"), list) else []
+    return SignupDetail(
+        **vars(summary),
+        description=_text(raw.get("description")),
+        allowed_games=_texts(raw.get("allowed_games")),
+        mystery=bool(raw.get("mystery")),
+        my_slot_count=_int(raw.get("my_slot_count")),
+        error=_text(raw.get("error")),
+        entries=tuple(e for e in map(_entry_view, entries) if e is not None),
+        test=_round_test(raw.get("test")),
+    )
+
+
+def parse_added_warnings(raw: Any) -> tuple[str, ...]:
+    """The manager's warnings about a config that was just entered in a round."""
+    return _texts(raw.get("warnings")) if isinstance(raw, Mapping) else ()
+
+
+def parse_config(raw: Mapping) -> ConfigView:
+    """Raises ValueError when the answer is not a config."""
+    return ConfigView(id=_require_id(raw, "a config"), name=_text(raw.get("name")) or "?", games=_texts(raw.get("games")))
+
+
+def parse_check(raw: Any) -> CheckResult:
+    """Raises ValueError when the answer is not a check result."""
+    if not isinstance(raw, Mapping) or not isinstance(raw.get("ok"), bool):
+        raise ValueError("The manager sent a check result without a verdict")
+    players = raw.get("players") if isinstance(raw.get("players"), list) else []
+    return CheckResult(
+        ok=raw["ok"],
+        errors=_texts(raw.get("errors")),
+        warnings=_texts(raw.get("warnings")),
+        players=tuple(
+            PlayerCheck(
+                name=_text(p.get("name")) or "?",
+                games=_texts(p.get("games")),
+                errors=_texts(p.get("errors")),
+                warnings=_texts(p.get("warnings")),
+            )
+            for p in players
+            if isinstance(p, Mapping)
+        ),
+        missing_roms=_texts(raw.get("missing_roms")),
     )
 
 
@@ -388,6 +529,10 @@ def parse_user_games(raw: Any) -> list[UserGame]:
 
 def parse_signups(raw: Any) -> list[SignupSummary]:
     return _parse_all(raw, parse_signup, "sign-ups")
+
+
+def parse_configs(raw: Any) -> list[ConfigView]:
+    return _parse_all(raw, parse_config, "configs")
 
 
 def listed_games(games: Iterable[GameSummary]) -> list[GameSummary]:

@@ -197,6 +197,24 @@ async def test_without_member_or_username_the_offer_is_open_to_anyone(bot, manag
     assert interaction.messages[0]["embed"].description == "You offered **Bob** to anyone who takes it"
 
 
+@pytest.mark.parametrize("blank", ["   ", " 	 "])
+async def test_a_blank_username_is_an_open_offer_not_an_offer_to_nobody_by_name(bot, manager, blank):
+    link(bot)
+    manager.add("PUT", HANDOVER, detail())
+    interaction = asker(bot)
+    await call(bot, "offer", interaction, "7", "2", None, blank)
+    assert body(manager) == {"to": None, "note": ""}
+    assert interaction.messages[0]["embed"].description == "You offered **Bob** to anyone who takes it"
+
+
+async def test_a_blank_username_next_to_a_member_is_ignored(bot, manager):
+    link(bot)
+    link(bot, user_id=2002, manager_id=20, username="bob_manager", token="apm_bobsTokenForTests")
+    manager.add("PUT", HANDOVER, detail())
+    await call(bot, "offer", asker(bot), "7", "2", SimpleNamespace(id=2002), "  ")
+    assert body(manager)["to"] == "bob_manager"
+
+
 async def test_a_member_and_a_username_together_are_refused(bot, manager):
     link(bot)
     link(bot, user_id=2002, manager_id=20, username="bob_manager", token="apm_bobsTokenForTests")

@@ -47,7 +47,7 @@ For people with the *Manage Server* permission, and for the admin role if the se
 | `/setup feed game:` | Choose which kinds of activity the thread of a game shows. |
 | `/setup events enabled:` | Turn Discord events for game starts and sign-up deadlines on or off. Needs the *Manage Events* permission to turn on. |
 
-The sign-ups channel is saved now and used by a later version.
+The sign-ups channel receives the deadline reminders of open sign-up rounds (see below).
 
 ### Live: threads, direct messages, overview and events
 
@@ -90,6 +90,34 @@ things and releasing need a token with access *Read and change*.
 
 These commands start a text client connection for you on the manager, so the game's server may announce that you joined
 and left. That is why joins and leaves are off in game threads by default.
+
+`/say !release` and `/say !collect` go straight to the game's server and skip the confirmation that `/release` and
+`/collect` ask for.
+
+### Sign-ups
+
+Sign-up rounds are run by the manager; these commands let you use them from Discord. Replies are private. `/signups`
+(see above) lists the open rounds for everyone; the commands below act as you, with your linked token. Joining and
+withdrawing need a token with access *Read and change*. The round is picked from a list of the open ones.
+
+| Command | Who | What |
+|---|---|---|
+| `/signup show round:` | linked users | The round's state, deadline, rules and your own entries with the problems the manager found. The organizer of the round also sees the latest test and what the generator said about each entry. Other players' entries are only counted. |
+| `/signup join round: file:` | linked users | Attach a `.yaml` or `.yml` file (at most 1 MiB, UTF-8). The manager checks it first and the result is shown; when it passes, the file is saved in your manager library under its file name and entered. A file with problems is neither saved nor entered. |
+| `/signup join round: config:` | linked users | Enters one of the configs you already saved in the manager. It was checked when you saved it, so it is not checked again. Give either a file or a config. |
+| `/signup withdraw round: entry:` | linked users | Takes one of your entries out of a round, after a confirmation. Only while the round takes entries. |
+| `/signup open name: deadline: slots_per_user: description:` | organizers | Opens a round. The deadline is `YYYY-MM-DD HH:MM` on the clock of the server's time zone (`/setup timezone`); leave it empty for a round without a deadline. Slots per player is 1 to 20. |
+| `/signup close round:` | organizers | Closes the sign-ups of a round, after a confirmation. |
+| `/signup test round:` | organizers | Starts a test generation of the entries without keeping the result, and shows the outcome here when it is over (the bot looks every 10 seconds, for up to 10 minutes). |
+
+`/signup open`, `close` and `test` need the organizer role when the server has set one (`/setup role`), and the manager
+must see you as an organizer or administrator; `close` and `test` only work for rounds you opened (administrators: all).
+Mystery rounds cannot be joined from Discord (the manager asks for a player name there); use the manager.
+
+**Reminders.** With a sign-ups channel set (`/setup channel kind:signups`), the bot posts there 24 hours and 1 hour
+before an open round with a deadline closes, once for each deadline (a moved deadline gets its reminders again). If both
+are due at once, only the 1 hour reminder is posted. The manager can also post its own reminder to a webhook: turn that
+off for the channel you set here, or it appears twice.
 
 ## Setup
 
@@ -166,6 +194,7 @@ What the bot stores, in `DATA_DIR/bot.sqlite3`:
 - For each server that ran `/setup`: its settings (language, time zone, channels, roles, events on or off), the thread
   and role the bot made for each game, the overview message and the Discord events it made.
 - For each game: how far its activity feed was read.
+- For each open sign-up round: which deadline reminders were already posted (server, round, deadline, lead time).
 
 `/mydata` shows a person everything stored about them. `/unlink` deletes it, takes the person out of the game roles
 and forgets their alerts. When the bot leaves a server, that server's data is deleted. The bot cannot revoke a token in the manager: after `/unlink`, do that under *API tokens*.

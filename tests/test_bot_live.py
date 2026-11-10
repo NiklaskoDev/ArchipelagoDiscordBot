@@ -165,7 +165,7 @@ async def test_setup_starts_the_live_tasks_registers_the_buttons_and_adds_the_al
     await bot.setup_hook()
     try:
         names = {task.name for task in bot._periodic}
-        assert {"game-cache", "heartbeat", "user-sync", "feeds", "relay", "overview", "events"} <= names
+        assert {"game-cache", "heartbeat", "user-sync", "feeds", "relay", "overview", "events", "signup-reminders"} <= names
         registered = set(bot._connection._view_store._dynamic_items)
         assert {HandoverAcceptButton.__discord_ui_compiled_template__, HandoverDeclineButton.__discord_ui_compiled_template__} <= registered
         assert "alerts" in {command.name for command in bot.tree.get_commands()}

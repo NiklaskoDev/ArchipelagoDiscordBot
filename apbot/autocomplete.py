@@ -136,3 +136,76 @@ async def item_choices(interaction: discord.Interaction, current: str) -> list[a
 async def location_choices(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
     """The names of locations in the slot's world, for /hint_location."""
     return await _name_choices(interaction, current, lambda names: names.locations)
+
+
+# --- sign-ups ---------------------------------------------------------------------------------------------------------
+def _round_choices(rounds, current: str) -> list[app_commands.Choice[str]]:
+    return [
+        app_commands.Choice(name=clip(signup.name, CHOICE_NAME), value=str(signup.id))
+        for signup in rounds
+        if _matches(signup.name, current)
+    ][:AUTOCOMPLETE]
+
+
+async def _rounds_to_pick(interaction: discord.Interaction, current: str, keep) -> list[app_commands.Choice[str]]:
+    bot: ApBot = interaction.client
+    try:
+        rounds = await bot.signup_directory.rounds(interaction.user.id, bot.access.user_token(interaction))
+    except (NotLinkedError, UserFacingError, ManagerError, TypeError) as exc:
+        log.debug("No rounds to suggest: %s", exc)
+        return []
+    return _round_choices([signup for signup in rounds if keep(signup)], current)
+
+
+async def signup_choices_open(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """The rounds that take entries now (for joining and withdrawing)."""
+    return await _rounds_to_pick(interaction, current, lambda signup: signup.open)
+
+
+async def signup_choices_managed(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """The rounds the person runs that are not generated yet (for closing and testing)."""
+    return await _rounds_to_pick(
+        interaction, current, lambda signup: signup.can_manage and signup.status in ("open", "closed")
+    )
+
+
+async def signup_choices_visible(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """The rounds worth a look: the open ones, and the closed ones the person runs."""
+    return await _rounds_to_pick(
+        interaction,
+        current,
+        lambda signup: signup.open or (signup.can_manage and signup.status in ("open", "closed")),
+    )
+
+
+async def config_choices(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """The person's saved configs, by name; the value is the config's id."""
+    bot: ApBot = interaction.client
+    try:
+        configs = await bot.signup_directory.configs(interaction.user.id, bot.access.user_token(interaction))
+    except (NotLinkedError, UserFacingError, ManagerError, TypeError) as exc:
+        log.debug("No configs to suggest: %s", exc)
+        return []
+    return [
+        app_commands.Choice(name=clip(config.name, CHOICE_NAME), value=str(config.id))
+        for config in configs
+        if _matches(config.name, current)
+    ][:AUTOCOMPLETE]
+
+
+async def my_entry_choices(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """The person's own entries in the round they chose; the value is the entry's id."""
+    bot: ApBot = interaction.client
+    signup_id = _typed_number(interaction, "round")
+    if signup_id is None:
+        return []
+    try:
+        entries = await bot.signup_directory.my_entries(interaction.user.id, bot.access.user_token(interaction), signup_id)
+    except (NotLinkedError, UserFacingError, ManagerError, ValueError, TypeError) as exc:
+        log.debug("No entries to suggest: %s", exc)
+        return []
+    return [
+        app_commands.Choice(name=clip(entry.name or "?", CHOICE_NAME), value=str(entry.id))
+        for entry in entries
+        if _matches(entry.name or "?", current)
+    ][:AUTOCOMPLETE]

@@ -30,6 +30,7 @@ CONTROL_TIMEOUT = httpx.Timeout(60, connect=5)  # stopping a game waits for its 
 TRACKER_TIMEOUT = httpx.Timeout(30, connect=5)  # the manager reads the game's save to answer
 QUICK_TIMEOUT = httpx.Timeout(2, connect=1)  # for suggestions: Discord waits 3 seconds for an autocomplete
 ACTION_TIMEOUT = httpx.Timeout(30, connect=5)  # release, collect and hint changes wait up to 20 s for the game's server
+CHECK_TIMEOUT = httpx.Timeout(200, connect=5)  # Archipelago reads the whole config (the manager gives it 180 s)
 RETRY_DELAYS = (0.5, 1.0, 2.0)  # seconds before each retry of a read
 MAX_DETAIL_LENGTH = 300
 UNAVAILABLE_STATUSES = frozenset({502, 503, 504})
@@ -138,8 +139,8 @@ class ManagerClient:
     async def game(self, token: str, game_id: int) -> dict:
         return await self._get(f"/api/games/{int(game_id)}", token)
 
-    async def list_signups(self, token: str) -> list[dict]:
-        return await self._get("/api/signups", token)
+    async def list_signups(self, token: str, *, quick: bool = False) -> list[dict]:
+        return await self._get("/api/signups", token, timeout=QUICK_TIMEOUT if quick else None, retry=not quick)
 
     async def wake(self, token: str, game_id: int) -> dict:
         return await self._post(f"/api/games/{int(game_id)}/wake", token, timeout=CONTROL_TIMEOUT)
@@ -211,3 +212,44 @@ class ManagerClient:
         """Offers a slot to the user named `to`, or to whoever takes it when `to` is None."""
         path = f"/api/games/{int(game_id)}/slots/{int(slot)}/handover"
         return await self._put(path, token, {"to": to, "note": note})
+
+    # --- sign-ups and configs ---------------------------------------------------------------------------------------
+    async def signup(self, token: str, signup_id: int, *, quick: bool = False) -> dict:
+        """One round with its entries (the asker's own, and all of them for the round's organizer) and, for the
+        organizer, the latest test."""
+        path = f"/api/signups/{int(signup_id)}"
+        return await self._get(path, token, timeout=QUICK_TIMEOUT if quick else None, retry=not quick)
+
+    async def create_signup(
+        self, token: str, name: str, description: str | None, deadline: float | None, slots_per_user: int
+    ) -> dict:
+        """Opens a round (organizers and administrators only)."""
+        body = {"name": name, "description": description, "deadline": deadline, "slots_per_user": int(slots_per_user)}
+        return await self._post("/api/signups", token, body=body)
+
+    async def close_signup(self, token: str, signup_id: int) -> dict:
+        return await self._post(f"/api/signups/{int(signup_id)}/close", token)
+
+    async def test_signup(self, token: str, signup_id: int) -> dict:
+        """Starts a test generation of the round's entries; the result shows in `signup()` once it is done."""
+        return await self._post(f"/api/signups/{int(signup_id)}/test", token)
+
+    async def add_entry(self, token: str, signup_id: int, config_id: int) -> dict:
+        """Enters one of the person's saved configs: the round, and the manager's `warnings` about the config."""
+        return await self._post(f"/api/signups/{int(signup_id)}/entries", token, body={"config_id": int(config_id)})
+
+    async def remove_entry(self, token: str, signup_id: int, entry_id: int) -> dict:
+        return await self._send("DELETE", f"/api/signups/{int(signup_id)}/entries/{int(entry_id)}", token)
+
+    async def list_configs(self, token: str, *, quick: bool = False) -> list[dict]:
+        """The person's saved configs."""
+        return await self._get("/api/configs", token, timeout=QUICK_TIMEOUT if quick else None, retry=not quick)
+
+    async def create_config(self, token: str, name: str, content: str) -> dict:
+        """Saves a config text in the person's library; the manager gives it a free name."""
+        return await self._post("/api/configs/text", token, body={"name": name, "content": content})
+
+    async def check_config(self, token: str, content: str) -> dict:
+        """Whether the generator takes a config, without generating (slow: Archipelago reads it; one check at a time
+        per person, else 429). Nothing is saved."""
+        return await self._post("/api/configs/check", token, timeout=CHECK_TIMEOUT, body={"content": content})

@@ -179,7 +179,8 @@ async def test_leaving_a_server_deletes_its_live_data_only(bot):
         bot.spaces.create(guild_id, 7, 100, 200, DEFAULT_FEED_KINDS)
         bot._overview_store.save(guild_id, 10, 20, "hash")
         bot._event_store.save(guild_id, "game_start", 7, 500, 1.0)
+        bot._reminder_store.mark_sent(guild_id, 7, 100.0, 3600)
     await bot.on_guild_remove(discord.Object(5000))
-    for table in ("guild_settings", "game_spaces", "overview_messages", "scheduled_events"):
+    for table in ("guild_settings", "game_spaces", "overview_messages", "scheduled_events", "signup_reminders"):
         assert bot.db.query_all(f"SELECT * FROM {table} WHERE guild_id = 5000") == [], table
         assert len(bot.db.query_all(f"SELECT * FROM {table} WHERE guild_id = 6000")) == 1, table

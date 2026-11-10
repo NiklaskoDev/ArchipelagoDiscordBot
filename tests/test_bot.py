@@ -23,7 +23,7 @@ from apbot.services.manager_watch import StartupFailure
 
 
 COMMAND_NAMES = {
-    "games", "game", "signups", "wake", "start", "stop", "restart", "link", "unlink", "mydata", "setup", "alerts",
+    "games", "game", "signups", "signup", "wake", "start", "stop", "restart", "link", "unlink", "mydata", "setup", "alerts",
     "tracker", "hints", "hint", "hint_location", "remaining", "say", "release", "collect", "status", "claim", "handover",
 }
 
@@ -269,7 +269,7 @@ async def test_no_heartbeat_while_the_gateway_is_not_connected(no_discord, manag
 # --- the database and the keys -----------------------------------------------------------------------------------------
 def test_the_bot_opens_and_migrates_its_database_in_the_data_folder(bot, tmp_path):
     assert (tmp_path / "bot.sqlite3").exists()
-    assert [r["version"] for r in bot.db.query_all("SELECT version FROM schema_migrations")] == [1, 2]
+    assert [r["version"] for r in bot.db.query_all("SELECT version FROM schema_migrations")] == [1, 2, 3]
 
 
 async def test_closing_the_bot_closes_the_database(no_discord, manager):
