@@ -286,6 +286,7 @@ MESSAGES: dict[str, str] = {
     "Your hint was found: {item} for **{receiver}** at {location} in **{finder}**'s world": "Ton indice a été trouvé : {item} pour **{receiver}** à {location} dans le monde de **{finder}**",
     "Your items are collected by themselves when you reach your goal.": "Tes objets sont récupérés automatiquement quand tu atteins ton objectif.",
     "Your items are released by themselves when you reach your goal.": "Tes objets sont libérés automatiquement quand tu atteins ton objectif.",
+    "Your link to the manager cannot be read any more. Run /link again": "Ton lien avec le manager ne peut plus être lu. Relance /link",
     "Your linked token can only read. Link a token with *Read and change* access": "Ton jeton lié ne peut que lire. Lie un jeton avec l'accès *Read and change*",
     "Your manager token no longer works. Make a new one and run /link again": "Ton jeton du manager ne fonctionne plus. Crées-en un nouveau et relance /link",
     "Your manager token stopped working. Make a new one and run /link again": "Ton jeton du manager ne fonctionne plus. Crée-en un nouveau et relance /link",

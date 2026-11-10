@@ -222,18 +222,55 @@ async def test_a_link_deleted_outside_unlink_tells_the_listener_too(bot, manager
     assert sync.heard.memberships[-1] == (1001, frozenset())
 
 
-async def test_a_token_that_cannot_be_decrypted_tells_the_listener_too(bot, manager, sync):
+def change_key(bot):
     from cryptography.fernet import Fernet
 
     from apbot.crypto import TokenCipher
 
+    bot.access._cipher = TokenCipher([Fernet.generate_key().decode()])
+
+
+async def test_a_token_that_cannot_be_decrypted_is_skipped_and_the_link_kept(bot, manager, sync):
     the_link = link(bot)
     games(manager, game_json(7, my_slots=MINE))
     await sync.sync_user(the_link)
-    bot.access._cipher = TokenCipher([Fernet.generate_key().decode()])  # the key changed
+    before = bot.links.get(1001).token_ciphertext
+    heard = len(sync.heard.memberships)
+    change_key(bot)  # the key changed
     await sync.sync_user(bot.links.get(1001))
-    assert sync.heard.memberships[-1] == (1001, frozenset())
-    assert bot.links.get(1001).status == "invalid"
+    assert len(sync.heard.memberships) == heard
+    assert sync.heard.memberships[-1] == (1001, frozenset({7}))
+    assert sync.heard.stopped == []
+    assert [g.id for g in sync.games_of(1001)] == [7]
+    saved = bot.links.get(1001)
+    assert saved.status == "active" and saved.token_ciphertext == before
+
+
+async def test_unreadable_links_are_counted_in_one_warning_per_start(bot, manager, sync, caplog):
+    import logging
+
+    link(bot, 1001)
+    link(bot, 1002, manager_id=11)
+    link(bot, 1003, manager_id=12)
+    change_key(bot)
+    bot.links.save(1003, 12, "cy", bot.access._cipher.encrypt(USER_TOKEN), USER_TOKEN[-4:], "en")  # readable again
+    games(manager)
+    with caplog.at_level(logging.DEBUG):
+        await sync.run_once()
+        await sync.run_once()
+    warnings = [r for r in caplog.records if r.name == "apbot.services.user_sync" and r.levelno == logging.WARNING]
+    assert len(warnings) == 1 and "2 linked people" in warnings[0].getMessage()
+    assert USER_TOKEN not in caplog.text
+
+
+async def test_no_warning_when_every_link_is_readable(bot, manager, sync, caplog):
+    import logging
+
+    link(bot)
+    games(manager)
+    with caplog.at_level(logging.DEBUG):
+        await sync.run_once()
+    assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
 
 
 async def test_someone_never_seen_is_not_announced_as_leaving(bot, manager, sync):

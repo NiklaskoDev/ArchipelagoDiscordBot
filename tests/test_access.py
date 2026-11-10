@@ -52,13 +52,38 @@ def test_an_invalid_link_asks_to_link_again(bot):
     assert error.value.message("en") == "Your manager token no longer works. Make a new one and run /link again"
 
 
-def test_a_token_that_cannot_be_decrypted_marks_the_link_invalid(bot, caplog):
+def test_a_token_that_cannot_be_decrypted_keeps_the_link_and_asks_to_link_again(bot, caplog):
     link_user(bot, cipher=TokenCipher([Fernet.generate_key().decode()]))  # stored under a key the bot does not have
+    before = bot.links.get(1001).token_ciphertext
     with pytest.raises(UserFacingError) as error:
         bot.access.user_token(asker(bot))
-    assert "no longer works" in error.value.message("en")
-    assert bot.links.get(1001).status == "invalid"
+    assert "/link" in error.value.message("en")
+    assert error.value.message("en") != "Your manager token no longer works. Make a new one and run /link again"
+    saved = bot.links.get(1001)
+    assert saved.status == "active"
+    assert saved.token_ciphertext == before
+    assert bot.access.is_unreadable(1001)
     assert USER_TOKEN not in caplog.text
+
+
+def test_the_link_works_again_once_the_right_key_is_back(bot):
+    key = Fernet.generate_key().decode()
+    link_user(bot, cipher=TokenCipher([key]))
+    with pytest.raises(UserFacingError):
+        bot.access.user_token(asker(bot))  # the bot started with a wrong key
+    restarted = Access(bot.links, bot.guild_settings, TokenCipher([key]))
+    assert restarted.user_token(asker(bot)) == USER_TOKEN
+    assert not restarted.is_unreadable(1001)
+
+
+def test_linking_again_after_an_unreadable_token_works(bot):
+    link_user(bot, cipher=TokenCipher([Fernet.generate_key().decode()]))
+    with pytest.raises(UserFacingError):
+        bot.access.user_token(asker(bot))
+    assert bot.access.is_unreadable(1001)
+    link_user(bot)  # /link again: the row is overwritten with the bot's own key
+    assert bot.access.user_token(asker(bot)) == USER_TOKEN
+    assert not bot.access.is_unreadable(1001)
 
 
 def test_a_token_stored_under_an_old_key_is_encrypted_again_with_the_first_key(bot):

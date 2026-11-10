@@ -29,6 +29,7 @@ class Access:
         self._links = links
         self._guilds = guilds
         self._cipher = cipher
+        self._unreadable: set[int] = set()  # people whose stored token the configured keys cannot decrypt
 
     def user_token(self, interaction: discord.Interaction) -> str:
         """The manager token of the person who caused this interaction (a command or a button: whoever clicked, never
@@ -42,12 +43,12 @@ class Access:
             self._links.set_locale(discord_id, language)  # direct messages later follow the language they use now
         token = self.stored_token(link)
         if token is None:
-            raise _link_again()
+            raise _link_unreadable() if self.is_unreadable(discord_id) else _link_again()
         return token
 
     def stored_token(self, link: UserLink) -> str | None:
-        """The token of a link, decrypted just now; None when the link is not active or cannot be decrypted any more
-        (then it is marked invalid, so the person is told to link again)."""
+        """The token of a link, decrypted just now; None when the link is not active or cannot be decrypted. A failed
+        decryption leaves the link as it is: a wrong key must not destroy it, the right key brings it back."""
         if link.status != STATUS_ACTIVE or link.token_ciphertext is None:
             return None
         try:
@@ -55,10 +56,16 @@ class Access:
             if self._cipher.needs_rotation(link.token_ciphertext):
                 self._links.replace_ciphertext(link.discord_user_id, self._cipher.encrypt(token))
         except TokenUndecryptable:
-            log.error("A stored manager token cannot be decrypted; BOT_ENCRYPTION_KEY may have changed")
-            self.on_token_invalid(link.discord_user_id)
+            self._unreadable.add(link.discord_user_id)
+            log.debug("A stored manager token cannot be decrypted with the configured keys")
             return None
+        self._unreadable.discard(link.discord_user_id)
         return token
+
+    def is_unreadable(self, discord_id: int) -> bool:
+        """Whether the last look at this person's stored token failed to decrypt it (as opposed to the link not being
+        active)."""
+        return discord_id in self._unreadable
 
     async def run(self, interaction: discord.Interaction, call: Callable[[str], Awaitable[T]]) -> T:
         """Calls the manager as the person: `call` gets their token. A token the manager refuses marks the link invalid;
@@ -104,3 +111,7 @@ class Access:
 
 def _link_again() -> UserFacingError:
     return UserFacingError("Your manager token no longer works. Make a new one and run /link again")
+
+
+def _link_unreadable() -> UserFacingError:
+    return UserFacingError("Your link to the manager cannot be read any more. Run /link again")

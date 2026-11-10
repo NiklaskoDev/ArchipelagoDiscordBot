@@ -20,6 +20,7 @@ Sections per version: Added, Changed, Fixed, Removed, Security.
 - A `MANAGER_URL` with a malformed port is refused at startup with a clear message instead of crashing later.
 - A very long game address in `/game` is cut to fit.
 - `/handover offer` with a blank username offers the slot to anyone, as it says, instead of to a user with an empty name.
+- A wrong or missing encryption key no longer erases linked accounts; affected people are asked to /link again and admins see one warning.
 
 ## [0.1.0] - YYYY-MM-DD
 ### Added

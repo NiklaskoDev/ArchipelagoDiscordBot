@@ -192,6 +192,59 @@ async def test_a_players_token_the_manager_refuses_marks_that_link_invalid(setup
     assert setup.bot.links.get(1001).status == "invalid"
 
 
+def make_unreadable(bot, discord_id, token):
+    """The link's token was stored under a key the bot does not have."""
+    from cryptography.fernet import Fernet
+
+    from apbot.crypto import TokenCipher
+
+    foreign = TokenCipher([Fernet.generate_key().decode()])
+    bot.links.save(discord_id, 10, "alice", foreign.encrypt(token), token[-4:], "en")
+    return bot.links.get(discord_id).token_ciphertext
+
+
+async def test_a_participant_whose_token_cannot_be_decrypted_is_skipped_for_the_next_one(setup):
+    second = "apm_tokenOfSecondUser"
+    await setup.load_games()
+    setup.link_user(None)
+    setup.bot.links.save(1002, 11, "bob", setup.bot.cipher.encrypt(second), second[-4:], "en")
+    setup.manager.add(
+        "GET", "/api/games", by_token({BOT_TOKEN: [], USER_TOKEN: [game_json(9, my_slots=MINE)], second: [game_json(9, my_slots=MINE)]})
+    )
+    await setup.sync.sync_user(setup.bot.links.get(1001))
+    await setup.sync.sync_user(setup.bot.links.get(1002))
+    before = make_unreadable(setup.bot, 1001, USER_TOKEN)
+    setup.cursors.set(9, 0)
+    setup.feed(9, activity_json([entry(1, "chat", player="Alice", text="psst")]))
+    await setup.poller.poll(setup.poller.games()[0])
+    assert setup.manager.requests[-1].headers["Authorization"] == f"Bearer {second}"
+    saved = setup.bot.links.get(1001)
+    assert saved.status == "active" and saved.token_ciphertext == before
+
+
+async def test_an_unreadable_only_reader_reads_nothing_and_keeps_the_link(setup):
+    told, memberships = [], []
+
+    async def stopped(link):
+        told.append(link.discord_user_id)
+
+    async def roles(discord_id, game_ids):
+        memberships.append((discord_id, game_ids))
+
+    setup.sync.listen(on_memberships=roles, on_token_stopped=stopped)
+    await setup.load_games()
+    setup.link_user(None)
+    setup.manager.add("GET", "/api/games", by_token({BOT_TOKEN: [], USER_TOKEN: [game_json(9, my_slots=MINE)]}))
+    await setup.sync.sync_user(setup.bot.links.get(1001))
+    before = make_unreadable(setup.bot, 1001, USER_TOKEN)
+    memberships.clear()
+    await setup.poller.poll(setup.poller.games()[0])
+    assert setup.activity_requests() == []
+    assert told == [] and memberships == []
+    saved = setup.bot.links.get(1001)
+    assert saved.status == "active" and saved.token_ciphertext == before
+
+
 async def test_finished_games_are_not_followed(setup):
     await setup.load_games(game_json(7, finished_at=1_700_000_500.0), game_json(8))
     assert [g.id for g in setup.poller.games()] == [8]

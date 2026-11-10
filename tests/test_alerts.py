@@ -102,6 +102,23 @@ def test_one_item_can_be_both_received_and_a_found_hint():
     assert [a.kind for a in rules_for(item(), GAME, ctx)] == ["item_received", "hint_found"]
 
 
+async def test_a_tracker_is_not_read_when_the_token_cannot_be_decrypted_and_the_link_is_kept(bot, make_engine):
+    from cryptography.fernet import Fernet
+
+    from apbot.crypto import TokenCipher
+
+    live = make_engine("hint_found")
+    await live.play()
+    foreign = TokenCipher([Fernet.generate_key().decode()])
+    bot.links.save(1001, 10, "alice", foreign.encrypt(USER_TOKEN), USER_TOKEN[-4:], "en")
+    before = bot.links.get(1001).token_ciphertext
+    live.tracker(hint_json("Sword", "Alice", "Bob", "Chest"))
+    await live.engine.handle(GAME, (item(),))
+    assert live.dms == [] and live.tracker_requests() == []
+    saved = bot.links.get(1001)
+    assert saved.status == "active" and saved.token_ciphertext == before
+
+
 # --- stuck_in_my_world -------------------------------------------------------------------------------------------------
 def stuck(player="Cy") -> FeedEntry:
     return feed_entry("status", player=player, status="stuck")

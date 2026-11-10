@@ -71,6 +71,7 @@ class UserSync:
         self._access = access
         self._client = client
         self._sleep = sleep
+        self._unreadable_reported = False
         self._states: dict[int, dict[int, UserGame]] = {}
         self._on_events: Callable[[list[UserGameEvent]], Awaitable[None]] | None = None
         self._on_memberships: Callable[[int, frozenset[int]], Awaitable[None]] | None = None
@@ -149,12 +150,27 @@ class UserSync:
             except Exception:
                 log.exception("Looking at one linked person's games failed; the others carry on")
             await self._sleep(STAGGER)
+        self._report_unreadable(links)
+
+    def _report_unreadable(self, links: list[UserLink]) -> None:
+        """One warning per start: the key can only change with a restart, so the first full pass shows everything."""
+        if self._unreadable_reported:
+            return
+        self._unreadable_reported = True
+        count = sum(1 for link in links if self._access.is_unreadable(link.discord_user_id))
+        if count:
+            log.warning(
+                "%d linked people have a stored manager token the bot cannot decrypt; BOT_ENCRYPTION_KEY may be wrong. "
+                "Their links are kept",
+                count,
+            )
 
     async def sync_user(self, link: UserLink) -> None:
         discord_id = link.discord_user_id
         token = self._access.stored_token(link)
         if token is None:
-            await self._drop(discord_id)
+            if not self._access.is_unreadable(discord_id):  # an unreadable token says nothing about the link itself
+                await self._drop(discord_id)
             return
         try:
             games = parse_user_games(await self._client.list_games(token))
