@@ -4,6 +4,8 @@ Versions follow `{major}.{minor}.{hotfix}[-prN]` — see `docs/ai/versioning.md`
 Sections per version: Added, Changed, Fixed, Removed, Security.
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-11-10
 ### Added
 - Discord bot with the commands `/games`, `/game` and `/signups`, in English, German, French and Dutch.
 - Docker image for amd64 and arm64, with an example `docker-compose.yml` that runs it next to the Archipelago Manager.
@@ -23,7 +25,3 @@ Sections per version: Added, Changed, Fixed, Removed, Security.
 - `/handover offer` with a blank username offers the slot to anyone, as it says, instead of to a user with an empty name.
 - A wrong or missing encryption key no longer erases linked accounts; affected people are asked to /link again and admins see one warning.
 - The container's start-up message about fixing data folder ownership no longer mixes into the output of the command it runs.
-
-## [0.1.0] - YYYY-MM-DD
-### Added
-- Initial version.
