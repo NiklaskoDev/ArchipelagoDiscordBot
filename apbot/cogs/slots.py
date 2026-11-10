@@ -57,6 +57,8 @@ class SlotsCog(commands.Cog):
         note: app_commands.Range[str, 1, NOTE_LENGTH] | None = None,
     ) -> None:
         lang = language_of(interaction.locale)
+        if status == CLEAR_STATUS and note:
+            raise UserFacingError("A note goes with a status; clearing the status removes it")  # the manager drops it
         target = await begin_slot_command(self.bot, interaction, game, slot)
         new_status = None if status == CLEAR_STATUS else status
         raw = await call_manager(

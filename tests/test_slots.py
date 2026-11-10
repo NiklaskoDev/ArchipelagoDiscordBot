@@ -53,13 +53,30 @@ async def test_status_sets_what_the_person_says_as_the_person(bot, manager, choi
     link(bot)
     manager.add("PUT", STATUS, detail())
     interaction = asker(bot)
-    await call(bot, "status", interaction, "7", choice, "2", "waiting for a key")
+    note = None if choice == "clear" else "waiting for a key"
+    await call(bot, "status", interaction, "7", choice, "2", note)
     [request] = manager.requests
     assert (request.method, request.url.path) == ("PUT", STATUS)
-    assert body(manager) == {"status": sent, "note": "waiting for a key"}
+    assert body(manager) == {"status": sent, "note": note or ""}
     assert request.headers["Authorization"] == f"Bearer {USER_TOKEN}" and BOT_TOKEN not in str(request.headers)
     [message] = interaction.messages
     assert message["embed"].description == text and message["ephemeral"] is True
+
+
+async def test_a_note_with_clear_is_refused_before_anything_is_asked(bot, manager):
+    link(bot)
+    interaction = asker(bot)
+    with pytest.raises(UserFacingError) as error:
+        await call(bot, "status", interaction, "7", "clear", "2", "some note")
+    assert error.value.message("en") == "A note goes with a status; clearing the status removes it"
+    assert manager.requests == [] and not interaction.response.deferred
+
+
+async def test_clear_without_a_note_is_fine(bot, manager):
+    link(bot)
+    manager.add("PUT", STATUS, detail())
+    await call(bot, "status", asker(bot), "7", "clear", "2")
+    assert body(manager) == {"status": None, "note": ""}
 
 
 async def test_status_without_a_note_sends_an_empty_one(bot, manager):

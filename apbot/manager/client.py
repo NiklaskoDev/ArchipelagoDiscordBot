@@ -28,6 +28,7 @@ log = logging.getLogger(__name__)
 TIMEOUT = httpx.Timeout(10, connect=5)
 CONTROL_TIMEOUT = httpx.Timeout(60, connect=5)  # stopping a game waits for its server to save and exit (up to ~25 s)
 TRACKER_TIMEOUT = httpx.Timeout(30, connect=5)  # the manager reads the game's save to answer
+QUICK_TIMEOUT = httpx.Timeout(2, connect=1)  # for suggestions: Discord waits 3 seconds for an autocomplete
 ACTION_TIMEOUT = httpx.Timeout(30, connect=5)  # release, collect and hint changes wait up to 20 s for the game's server
 RETRY_DELAYS = (0.5, 1.0, 2.0)  # seconds before each retry of a read
 MAX_DETAIL_LENGTH = 300
@@ -103,8 +104,13 @@ class ManagerClient:
         except ValueError:
             raise ManagerUnavailable(response.status_code, "The manager sent an answer that is not JSON") from None
 
-    async def _get(self, path: str, token: str | None, *, timeout: httpx.Timeout | None = None) -> Any:
-        """A read: retried when the manager is busy or restarting. Changes are never retried (they might repeat)."""
+    async def _get(
+        self, path: str, token: str | None, *, timeout: httpx.Timeout | None = None, retry: bool = True
+    ) -> Any:
+        """A read: retried when the manager is busy or restarting (unless `retry` is off). Changes are never retried
+        (they might repeat)."""
+        if not retry:
+            return await self._send("GET", path, token, timeout=timeout)
         for delay in RETRY_DELAYS:
             try:
                 return await self._send("GET", path, token, timeout=timeout)
@@ -164,21 +170,22 @@ class ManagerClient:
         return await self._send("DELETE", f"/api/games/{int(game_id)}/slots/{int(slot)}/handover", token)
 
     # --- the player's tools: text client, hints, slot status, claiming and handing over -----------------------------
-    async def client_poll(self, token: str, game_id: int, slot: int, after: int) -> dict:
+    async def client_poll(self, token: str, game_id: int, slot: int, after: int, *, quick: bool = False) -> dict:
         """Opens the player's text client connection (or keeps it open) and returns the messages after `after`:
         `{state, error, last, messages, hint_points, hint_cost}`. A change as far as the manager is concerned (it
-        starts a connection), so not retried."""
+        starts a connection), so not retried. `quick` gives up after two seconds, for suggestions."""
         path = f"/api/games/{int(game_id)}/slots/{int(slot)}/client"
-        return await self._post(path, token, body={"after": max(int(after), 0)})
+        return await self._post(path, token, body={"after": max(int(after), 0)}, timeout=QUICK_TIMEOUT if quick else None)
 
     async def client_say(self, token: str, game_id: int, slot: int, text: str) -> dict:
         path = f"/api/games/{int(game_id)}/slots/{int(slot)}/client/say"
         return await self._post(path, token, body={"text": text})
 
-    async def client_names(self, token: str, game_id: int, slot: int) -> dict:
+    async def client_names(self, token: str, game_id: int, slot: int, *, quick: bool = False) -> dict:
         """The item and location names of the slot's world: `{items, locations}`, both empty until a text client
-        connection of this player has loaded them."""
-        return await self._get(f"/api/games/{int(game_id)}/slots/{int(slot)}/client/names", token)
+        connection of this player has loaded them. `quick` gives up after two seconds without retrying."""
+        path = f"/api/games/{int(game_id)}/slots/{int(slot)}/client/names"
+        return await self._get(path, token, timeout=QUICK_TIMEOUT if quick else None, retry=not quick)
 
     async def slot_action(self, token: str, game_id: int, slot: int, action: str) -> dict:
         """`release` or `collect` for the player: `{done, message}`, the server's answer."""

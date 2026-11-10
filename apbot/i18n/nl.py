@@ -20,6 +20,7 @@ MESSAGES: dict[str, str] = {
     "**{to}** took over **{player}** from **{previous}**": "**{to}** heeft **{player}** overgenomen van **{previous}**",
     "A message can be at most {limit} characters long": "Een bericht mag maximaal {limit} tekens lang zijn",
     "A message can only be plain text on one line": "Een bericht mag alleen uit gewone tekst op één regel bestaan",
+    "A note goes with a status; clearing the status removes it": "Een notitie hoort bij een status; als je de status wist, verdwijnt ze",
     "A player is stuck and waits for items in my world": "Een speler zit vast en wacht op items in mijn wereld",
     "A slot is offered to me": "Mij wordt een slot aangeboden",
     "API token": "API-token",

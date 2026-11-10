@@ -25,7 +25,11 @@ LINE_LIMIT = 240  # 15 lines of this size stay below the 4096 characters of an e
 MAX_TEXT_LENGTH = 1000  # the manager's limit for one message
 NAMES_TTL = 600.0
 MAX_CACHED_NAMES = 200
-OWN_NOTE_TYPE = "Client"  # the manager's own notes in the session ("connection lost"), not the server's answers
+# What the server sends back to a command: the command's result, and the hint a !hint or !hint_location gives. Other
+# messages that concern the player (items sent, joins, chat) arrive at any time and are not answers.
+ANSWER_TYPES = frozenset({"CommandResult", "Hint"})
+NAMES_BUDGET = 2.5  # seconds for suggestions in all; Discord waits 3
+NAMES_LOADING_PAUSE = 5.0  # seconds a "still loading" answer is reused instead of asking the manager on every keystroke
 
 
 @dataclass(frozen=True)
@@ -66,10 +70,10 @@ def _message_lines(message: Any) -> list[str]:
 
 
 def answer_lines(messages: Any) -> list[str]:
-    """The lines of the messages that are the server's words to this player (not other people's, not the manager's)."""
+    """The lines of the messages that answer this player's command (see ANSWER_TYPES)."""
     lines: list[str] = []
     for message in messages if isinstance(messages, list) else []:
-        if isinstance(message, Mapping) and message.get("mine") and message.get("type") != OWN_NOTE_TYPE:
+        if isinstance(message, Mapping) and message.get("mine") and message.get("type") in ANSWER_TYPES:
             lines += _message_lines(message)
     return lines
 
@@ -86,6 +90,7 @@ class TextClientBridge:
         self._sleep = sleep
         self._now = now
         self._names: TtlCache[Names] = TtlCache(NAMES_TTL, MAX_CACHED_NAMES, now=now)
+        self._loading: TtlCache[bool] = TtlCache(NAMES_LOADING_PAUSE, MAX_CACHED_NAMES, now=now)
 
     async def connect(self, token: str, game_id: int, slot: int) -> int:
         """Opens the player's connection and waits until it is connected. Returns the number of the newest message, so
@@ -144,10 +149,18 @@ class TextClientBridge:
         cached = self._names.get(key)
         if cached is not None:
             return cached
-        await self._client.client_poll(token, game_id, slot, 0)
-        raw = await self._client.client_names(token, game_id, slot)
-        names = Names(_strings(raw.get("items")), _strings(raw.get("locations")))
-        if not names.items and not names.locations:
+        if self._loading.get(key):
+            return None
+        names = None
+        try:
+            async with asyncio.timeout(NAMES_BUDGET):
+                await self._client.client_poll(token, game_id, slot, 0, quick=True)
+                raw = await self._client.client_names(token, game_id, slot, quick=True)
+            names = Names(_strings(raw.get("items")), _strings(raw.get("locations")))
+        except TimeoutError:
+            pass  # too slow for a suggestion: counts as still loading
+        if names is None or not (names.items or names.locations):
+            self._loading.set(key, True)
             return None
         self._names.set(key, names)
         return names

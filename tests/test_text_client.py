@@ -162,7 +162,7 @@ async def test_what_does_not_concern_the_player_and_the_managers_own_notes_are_n
 
 async def test_the_parts_of_a_message_are_joined_and_every_line_is_escaped(bridge, manager):
     parts = [{"text": "Alice", "kind": "player"}, {"text": " found "}, {"text": "*Sword* @everyone <@123>", "kind": "item"}]
-    manager.add("POST", CLIENT, page(last=1), page(last=2, messages=[message(2, "", kind="ItemSend", parts=parts)]), page(last=2))
+    manager.add("POST", CLIENT, page(last=1), page(last=2, messages=[message(2, "", kind="Hint", parts=parts)]), page(last=2))
     manager.add("POST", SAY, {"ok": True})
     [line] = (await bridge.run(USER_TOKEN, 7, 2, "!hint Sword")).lines
     assert line == rf"Alice found \*Sword\* @{ZWSP}everyone <{ZWSP}@{ZWSP}123>"
@@ -214,10 +214,11 @@ async def test_names_open_the_connection_then_ask_and_are_cached_for_ten_minutes
     assert len(manager.requests) == 4  # expired: asked again
 
 
-async def test_names_are_none_until_the_manager_has_them_and_then_not_cached(bridge, manager):
+async def test_names_are_none_until_the_manager_has_them_and_then_not_cached(bridge, manager, clock):
     manager.add("POST", CLIENT, page("connecting"))
     manager.add("GET", NAMES, {"items": [], "locations": []}, {"items": ["Sword"], "locations": []})
     assert await bridge.names(1001, USER_TOKEN, 7, 2) is None
+    clock.now += 5
     assert (await bridge.names(1001, USER_TOKEN, 7, 2)).items == ("Sword",)
 
 
@@ -238,3 +239,76 @@ async def test_a_names_answer_with_junk_counts_as_not_loaded(bridge, manager):
 
 def test_the_bridge_needs_no_manager_to_be_built():
     assert TextClientBridge(FakeManager().client) is not None
+
+
+# --- what counts as the answer -----------------------------------------------------------------------------------------
+async def test_other_messages_about_the_player_in_the_window_are_not_the_answer(bridge, manager):
+    manager.add(
+        "POST",
+        CLIENT,
+        page(last=1),
+        page(
+            last=5,
+            messages=[
+                message(2, "Alice sent Sword to Bob", kind="ItemSend"),
+                message(3, "Cy joined the game", kind="Join"),
+                message(4, "Alice: hi", kind="Chat"),
+                message(5, "Remaining items: 3", kind="CommandResult"),
+            ],
+        ),
+        page(last=5),
+    )
+    manager.add("POST", SAY, {"ok": True})
+    assert (await bridge.run(USER_TOKEN, 7, 2, "!remaining")).lines == ("Remaining items: 3",)
+
+
+async def test_the_hint_the_server_gives_is_part_of_the_answer(bridge, manager):
+    manager.add(
+        "POST",
+        CLIENT,
+        page(last=1),
+        page(last=3, messages=[message(2, "Sword is at Chest", kind="Hint"), message(3, "Hint points: 2", kind="CommandResult")]),
+        page(last=3),
+    )
+    manager.add("POST", SAY, {"ok": True})
+    assert (await bridge.run(USER_TOKEN, 7, 2, "!hint Sword")).lines == ("Sword is at Chest", "Hint points: 2")
+
+
+# --- suggestions stay fast ---------------------------------------------------------------------------------------------
+async def test_names_that_are_still_loading_are_not_asked_for_again_on_every_keystroke(bridge, manager, clock):
+    manager.add("POST", CLIENT, page("connecting"))
+    manager.add("GET", NAMES, {"items": [], "locations": []})
+    assert await bridge.names(1001, USER_TOKEN, 7, 2) is None
+    for _ in range(5):
+        assert await bridge.names(1001, USER_TOKEN, 7, 2) is None
+    assert len(manager.requests) == 2
+    assert await bridge.names(2002, "apm_other", 7, 2) is None  # another person is asked for themselves
+    assert len(manager.requests) == 4
+    clock.now += 5
+    await bridge.names(1001, USER_TOKEN, 7, 2)
+    assert len(manager.requests) == 6
+
+
+async def test_suggestions_use_short_timeouts_and_no_retries(bridge, manager):
+    manager.add("POST", CLIENT, page("connecting"))
+    manager.add("GET", NAMES, (503, {"detail": "busy"}))
+    from apbot.manager.errors import ManagerUnavailable
+
+    with pytest.raises(ManagerUnavailable):
+        await bridge.names(1001, USER_TOKEN, 7, 2)
+    assert manager.paths() == [CLIENT, NAMES]  # one try each
+    assert all(r.extensions["timeout"]["read"] == 2 for r in manager.requests)
+
+
+async def test_a_manager_too_slow_for_discord_counts_as_still_loading(bridge, manager, monkeypatch):
+    import asyncio
+
+    from apbot.services import text_client
+
+    async def slow(*args, **kwargs):
+        await asyncio.sleep(10)
+
+    monkeypatch.setattr(text_client, "NAMES_BUDGET", 0.05)
+    monkeypatch.setattr(bridge._client, "client_poll", slow)
+    assert await bridge.names(1001, USER_TOKEN, 7, 2) is None
+    assert await bridge.names(1001, USER_TOKEN, 7, 2) is None  # and the next keystroke does not wait again

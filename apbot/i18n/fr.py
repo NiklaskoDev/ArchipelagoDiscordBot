@@ -20,6 +20,7 @@ MESSAGES: dict[str, str] = {
     "**{to}** took over **{player}** from **{previous}**": "**{to}** a repris **{player}** de **{previous}**",
     "A message can be at most {limit} characters long": "Un message peut contenir {limit} caractères au maximum",
     "A message can only be plain text on one line": "Un message doit être du texte simple sur une seule ligne",
+    "A note goes with a status; clearing the status removes it": "Une note va avec un statut ; effacer le statut la supprime",
     "A player is stuck and waits for items in my world": "Un joueur est bloqué et attend des objets de mon monde",
     "A slot is offered to me": "On me propose un slot",
     "API token": "Jeton d'API",
