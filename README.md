@@ -165,6 +165,27 @@ API token travels in a request header. TLS certificates are always verified.
 The bot keeps running when the manager is down and retries every 30 seconds. It stops with exit code 2 when the manager
 refuses `MANAGER_API_TOKEN`.
 
+#### Unraid
+
+1. Add the template in the Unraid terminal (or web terminal), until the bot is in Community Applications:
+
+   ```sh
+   curl -fsSL -o /boot/config/plugins/dockerMan/templates-user/ap-discord-bot.xml      https://raw.githubusercontent.com/NiklaskoDev/ArchipelagoDiscordBot/main/unraid/ap-discord-bot.xml
+   ```
+
+   `-f` keeps an error page from being saved as the template. Run the same command again to update it.
+2. Open *Docker -> Add Container*, pick **ap-discord-bot** from the template list, fill in the two tokens, the
+   encryption key (the `docker run --rm ...` one-liner above also works in the Unraid terminal) and the manager
+   address, then *Apply*.
+3. Unraid has no compose network, so the bot needs a way to reach the manager. Either:
+   - **Custom network (recommended).** Run `docker network create archipelago` once, set *Network Type* of both the
+     manager and the bot container to `archipelago`, and use `MANAGER_URL=http://ArchipelagoManager:8080` (the manager
+     template's container name). Turn on *Settings -> Docker -> Preserve user defined networks* (Advanced view) so the
+     network survives a reboot.
+   - **Unraid's address.** Use `MANAGER_URL=http://<Unraid IP>:<manager web UI port>`. The API token then crosses your
+     network unencrypted, as the `http://` note above says.
+4. The bot runs as `nobody:users` (99:100) like the manager, and keeps its data in `/mnt/user/appdata/ap-discord-bot`.
+
 ## Settings
 
 All settings are environment variables. Secrets belong in `.env` (git-ignored), never in the compose file.

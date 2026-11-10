@@ -1,0 +1,42 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>ap-discord-bot</Name>
+  <Repository>ghcr.io/niklaskodev/archipelagodiscordbot:latest</Repository>
+  <Registry>https://github.com/NiklaskoDev/ArchipelagoDiscordBot/pkgs/container/archipelagodiscordbot</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/NiklaskoDev/ArchipelagoDiscordBot/issues</Support>
+  <Project>https://github.com/NiklaskoDev/ArchipelagoDiscordBot</Project>
+  <Overview>Discord bot for Archipelago multiworld games.&#xD;
+&#xD;
+- Lists games and open sign-ups, and joins sign-up rounds from Discord&#xD;
+- Live threads and roles per game, with opt-in direct messages for items, hints and stuck players&#xD;
+- Player tools from Discord: tracker, hints, release, collect, hand-over of slots&#xD;
+&#xD;
+It talks to a running Archipelago Manager over its REST API, so the manager must be reachable from this container: put both containers on the same custom Docker network and use http://ArchipelagoManager:8080, or use http://[Unraid IP]:8080 (the API token then crosses your network unencrypted). The bot has no web UI.</Overview>
+  <Category>Tools: GameServers:</Category>
+  <WebUI/>
+  <TemplateURL>https://raw.githubusercontent.com/NiklaskoDev/ArchipelagoDiscordBot/main/unraid/ap-discord-bot.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/NiklaskoDev/ArchipelagoDiscordBot/main/unraid/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>A running Archipelago Manager (ghcr.io/niklaskodev/archipelagomanagerdocker) and a Discord application</Requires>
+  <Config Name="Data (appdata)" Target="/data" Default="/mnt/user/appdata/ap-discord-bot" Mode="rw" Description="SQLite database and heartbeat. Back this folder up together with the encryption key." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/ap-discord-bot</Config>
+  <Config Name="Discord bot token" Target="DISCORD_TOKEN" Default="" Mode="" Description="The bot token of your Discord application (Discord developer portal, Bot, Reset Token)." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Manager address" Target="MANAGER_URL" Default="" Mode="" Description="Address of the manager without a path, as this container sees it: http://ArchipelagoManager:8080 when both containers are on the same custom Docker network, otherwise http://&lt;Unraid IP&gt;:8080. Use https:// anywhere but a private Docker network; see the README." Type="Variable" Display="always" Required="true" Mask="false"/>
+  <Config Name="Manager API token" Target="MANAGER_API_TOKEN" Default="" Mode="" Description="API token (starts with apm_) of the bot's account on the manager: a plain user, access Read. Create it in the manager under API tokens." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Encryption key" Target="BOT_ENCRYPTION_KEY" Default="" Mode="" Description="Encrypts the manager tokens people link with /link. One or more Fernet keys separated by commas, the first one encrypts. Make one with: docker run --rm ghcr.io/niklaskodev/archipelagodiscordbot python -c &quot;from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())&quot; Lose it and everyone has to link again." Type="Variable" Display="always" Required="true" Mask="true"/>
+  <Config Name="Log level" Target="LOG_LEVEL" Default="INFO" Mode="" Description="DEBUG, INFO, WARNING, ERROR or CRITICAL." Type="Variable" Display="advanced" Required="false" Mask="false">INFO</Config>
+  <Config Name="Development server id" Target="DISCORD_DEV_GUILD_ID" Default="" Mode="" Description="Development only: register the commands in this one Discord server instead of globally. Leave empty." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Data folder in the container" Target="DATA_DIR" Default="/data" Mode="" Description="Leave at /data; it must match the container path of 'Data (appdata)'." Type="Variable" Display="advanced" Required="false" Mask="false">/data</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User id the bot runs as. 99 is Unraid's 'nobody'." Type="Variable" Display="advanced" Required="true" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group id the bot runs as. 100 is Unraid's 'users'." Type="Variable" Display="advanced" Required="true" Mask="false">100</Config>
+  <Config Name="UMASK" Target="UMASK" Default="022" Mode="" Description="File creation mask." Type="Variable" Display="advanced" Required="false" Mask="false">022</Config>
+  <Config Name="Timezone" Target="TZ" Default="" Mode="" Description="For example Europe/Berlin. Affects timestamps in the log." Type="Variable" Display="advanced" Required="false" Mask="false"/>
+</Container>
