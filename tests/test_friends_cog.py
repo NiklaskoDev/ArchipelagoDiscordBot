@@ -187,7 +187,7 @@ async def choose(bot, manager, value, raw=FULL, locale="en-US"):
     """Shows /friends, picks `value` in the select; returns (view of the buttons, the click that chose)."""
     link(bot)
     manager.add("GET", FRIENDS, raw)
-    interaction = asker(bot)
+    interaction = asker(bot, locale=locale)
     await show_friends(bot, interaction)
     view = interaction.messages[0]["view"]
     view.select._values = [value]
@@ -258,8 +258,11 @@ async def test_declining_taking_back_and_removing_all_delete_the_friendship_entr
 async def test_the_list_is_asked_again_after_a_change(bot, manager):
     await press(bot, manager, "incoming:21", 0, method="POST", path="/api/friends/21/accept")
     manager.add("GET", FRIENDS, overview())
-    await show_friends(bot, asker(bot))
-    assert [r.url.path for r in manager.requests].count(FRIENDS) == 2
+    await bot.access.call_as(asker(bot), USER_TOKEN, lambda token: bot.friend_directory.overview(1001, token))
+    # shown, checked just before the change, changed, and asked again because the change dropped the kept list
+    assert [(r.method, r.url.path) for r in manager.requests] == [
+        ("GET", FRIENDS), ("GET", FRIENDS), ("POST", "/api/friends/21/accept"), ("GET", FRIENDS),
+    ]
 
 
 async def test_the_result_is_in_the_persons_language(bot, manager):
@@ -463,3 +466,72 @@ def test_the_commands_are_there_and_the_member_option_accepts_users_and_members(
     assert add.name == "add" and {p.name for p in add.parameters} == {"member", "username"}
     assert not any(isinstance(p.required, bool) and p.required for p in add.parameters)
     assert discord.AppCommandOptionType.user in {p.type for p in add.parameters}
+
+
+# --- buttons that are out of date --------------------------------------------------------------------------------------
+NOW_FRIENDS = overview(friends=[friend_json(21, "cy", since=100.0), friend_json(22, "dee", since=100.0)])
+NOW_NOTHING = overview()
+NOW_OUTGOING = overview(outgoing=[friend_json(20, "bob", asked_at=100.0)])
+NOW_REVERSED = overview(incoming=[friend_json(22, "dee", asked_at=100.0)])  # they ask the person instead
+
+
+async def press_after(bot, manager, value, index, now, *, locale="en-US"):
+    """Shows /friends, picks `value`, then the manager's list changes to `now`; presses button `index`."""
+    edit, _ = await choose(bot, manager, value, locale=locale)
+    manager.add("GET", FRIENDS, now)
+    manager.add("POST", "/api/friends/21/accept", {"ok": True})
+    for person in ("20", "21", "22"):
+        manager.add("DELETE", f"/api/friends/{person}", {"removed": "friend"})  # would end a friendship
+    click = FakeInteraction(bot, user_id=1001, locale=locale)
+    await edit["view"].children[index].callback(click)
+    return click, edit["view"]
+
+
+@pytest.mark.parametrize(
+    ("value", "index", "now"),
+    [
+        ("incoming:21", 0, NOW_FRIENDS),  # accept: it was accepted elsewhere
+        ("incoming:21", 1, NOW_FRIENDS),  # decline: it became a friendship, which must not end
+        ("incoming:21", 0, NOW_NOTHING),  # the asker took the request back
+        ("incoming:21", 1, NOW_NOTHING),
+        ("outgoing:22", 0, NOW_FRIENDS),  # take back: they accepted meanwhile
+        ("outgoing:22", 0, NOW_NOTHING),  # take back: they declined meanwhile
+        ("outgoing:22", 0, NOW_REVERSED),  # no request of the person waits for an answer any more
+    ],
+)
+async def test_a_request_that_is_not_open_any_more_is_not_answered_and_nothing_is_changed(bot, manager, value, index, now):
+    click, view = await press_after(bot, manager, value, index, now)
+    assert [r for r in manager.requests if r.method != "GET"] == []
+    [edit] = click.original_edits
+    assert edit["embed"].description == "This friend request is no longer open" and edit["view"] is None
+    assert view.is_finished()
+
+
+@pytest.mark.parametrize("now", [NOW_NOTHING, NOW_OUTGOING, NOW_FRIENDS])
+async def test_removing_a_friend_who_is_not_one_any_more_sends_nothing(bot, manager, now):
+    click, view = await press_after(bot, manager, "friend:20", 0, now)
+    assert [r for r in manager.requests if r.method != "GET"] == []
+    [edit] = click.original_edits
+    assert edit["embed"].description == "**bob** is not your friend any more" and edit["view"] is None
+    assert view.is_finished()
+
+
+async def test_the_notice_for_a_friend_who_is_gone_is_in_the_persons_language(bot, manager):
+    click, _ = await press_after(bot, manager, "friend:20", 0, NOW_NOTHING, locale="de")
+    assert click.original_edits[0]["embed"].description == "**bob** ist nicht mehr dein Freund"
+
+
+async def test_the_list_is_read_with_the_pressers_token_before_anything_is_changed(bot, manager):
+    link(bot)
+    manager.add("GET", FRIENDS, FULL)
+    interaction = asker(bot)
+    await show_friends(bot, interaction)
+    view = interaction.messages[0]["view"]
+    view.select._values = ["friend:20"]
+    click = FakeInteraction(bot, user_id=1001)
+    await view.select.callback(click)
+    manager.add("DELETE", "/api/friends/20", {"removed": "friend"})
+    await click.response.edited[0]["view"].children[0].callback(FakeInteraction(bot, user_id=1001))
+    check, delete = manager.requests[-2:]
+    assert (check.method, check.url.path) == ("GET", FRIENDS) and (delete.method, delete.url.path) == ("DELETE", "/api/friends/20")
+    assert check.headers["Authorization"] == f"Bearer {USER_TOKEN}"

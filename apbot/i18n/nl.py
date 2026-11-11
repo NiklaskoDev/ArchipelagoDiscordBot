@@ -22,6 +22,7 @@ MESSAGES: dict[str, str] = {
     "**{to}** took over **{player}**": "**{to}** heeft **{player}** overgenomen",
     "**{to}** took over **{player}** from **{previous}**": "**{to}** heeft **{player}** overgenomen van **{previous}**",
     "**{user}** is no longer your friend. Configs you shared only with each other by name are no longer shared.": "**{user}** is niet meer je vriend. Configs die jullie alleen bij naam met elkaar deelden, worden niet meer gedeeld.",
+    "**{user}** is not your friend any more": "**{user}** is niet meer je vriend",
     "**{user}** wants to be your friend on the manager": "**{user}** wil in de manager met je bevriend zijn",
     "A message can be at most {limit} characters long": "Een bericht mag maximaal {limit} tekens lang zijn",
     "A message can only be plain text on one line": "Een bericht mag alleen uit gewone tekst op één regel bestaan",

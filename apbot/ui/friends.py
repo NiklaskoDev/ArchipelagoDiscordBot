@@ -12,7 +12,7 @@ from apbot.manager.client import ManagerClient
 from apbot.manager.views import FriendsOverview, FriendView
 from apbot.ui.embeds import field_lines, notice_embed
 from apbot.ui.format import clip, safe_text, ts
-from apbot.ui.style import ACCENT, CHOICE_NAME, NAME_LIMIT, SELECT_OPTIONS, SEPARATOR, SUCCESS
+from apbot.ui.style import ACCENT, CHOICE_NAME, NAME_LIMIT, SELECT_OPTIONS, SEPARATOR, SUCCESS, WARNING
 from apbot.ui.views import SELECT_TIMEOUT, AuthorView
 
 INCOMING: Final = "incoming"
@@ -60,6 +60,15 @@ ACTIONS: dict[str, tuple[FriendAction, ...]] = {
             ),
         ),
     ),
+}
+
+
+# which list of the overview a chosen person has to be in for the buttons to still apply
+STILL_THERE = {INCOMING: "incoming", OUTGOING: "outgoing", FRIEND: "friends"}
+GONE_TEXTS = {
+    INCOMING: translatable("This friend request is no longer open"),
+    OUTGOING: translatable("This friend request is no longer open"),
+    FRIEND: translatable("**{user}** is not your friend any more"),
 }
 
 
@@ -141,7 +150,7 @@ class FriendActionView(AuthorView):
 
     def __init__(self, author_id: int, lang: str, kind: str, friend: FriendView):
         super().__init__(author_id, lang, timeout=SELECT_TIMEOUT)
-        self._friend = friend
+        self._friend, self._kind = friend, kind
         for action in ACTIONS[kind]:
             button = discord.ui.Button(label=t(action.label, lang), style=action.style)
             button.callback = self._callback_for(action)
@@ -151,9 +160,21 @@ class FriendActionView(AuthorView):
         async def callback(interaction: discord.Interaction) -> None:
             bot = interaction.client
             await interaction.response.defer()
-            await bot.access.run(interaction, lambda token: action.call(bot.manager, token, self._friend.id))
-            bot.friend_directory.forget(interaction.user.id)
+            user_id = interaction.user.id
             user = safe_text(self._friend.username, NAME_LIMIT)
+            # The buttons can be minutes old, and the manager's remove deletes whatever row joins the two people: a
+            # request answered or a friendship ended meanwhile must not be acted on again.
+            bot.friend_directory.forget(user_id)
+            overview = await bot.access.run(
+                interaction, lambda token: bot.friend_directory.overview(user_id, token)
+            )
+            if self._friend.id not in {p.id for p in getattr(overview, STILL_THERE[self._kind])}:
+                gone = notice_embed(t(GONE_TEXTS[self._kind], self._lang, user=user), WARNING)
+                await interaction.edit_original_response(embed=gone, view=None)
+                self.stop()
+                return
+            await bot.access.run(interaction, lambda token: action.call(bot.manager, token, self._friend.id))
+            bot.friend_directory.forget(user_id)
             embed = notice_embed(t(action.result, self._lang, user=user), SUCCESS)
             await interaction.edit_original_response(embed=embed, view=None)
             self.stop()
