@@ -281,6 +281,7 @@ MESSAGES: dict[str, str] = {
     "There is nothing left to release.": "Es gibt nichts mehr freizugeben.",
     "These games need it to generate: {games}": "Diese Spiele brauchen sie zum Generieren: {games}",
     "This command only works in a server": "Dieser Befehl funktioniert nur auf einem Server",
+    "This friend request is no longer open": "Diese Freundschaftsanfrage ist nicht mehr offen",
     "This game has no open thread in this server": "Dieses Spiel hat auf diesem Server keinen offenen Thread",
     "This manager account is already linked to another Discord account. Unlink it there first": "Dieses Manager-Konto ist bereits mit einem anderen Discord-Konto verknüpft. Trenne es dort zuerst",
     "This manager has no friends feature yet. Ask an admin to update the Archipelago Manager.": "Dieser Manager hat noch keine Freundesfunktion. Bitte einen Admin, den Archipelago Manager zu aktualisieren.",

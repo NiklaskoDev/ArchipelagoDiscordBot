@@ -1,8 +1,8 @@
 """Buttons that keep working after a restart: the answers to a slot offered or a friend request in a direct message, and
 the marks for a hint.
 
-The `custom_id` carries game, slot, hint and manager user numbers only; who clicked is always the person who pressed the button, and
-their own linked token is used (never one named in the id).
+The `custom_id` carries game, slot, hint and manager user numbers only; who clicked is always the person who pressed
+the button, and their own linked token is used (never one named in the id).
 """
 
 import contextlib
@@ -16,7 +16,7 @@ from apbot.manager.views import parse_game_summary
 from apbot.ui.embeds import notice_embed
 from apbot.ui.format import safe_text
 from apbot.ui.respond import reply
-from apbot.ui.style import NAME_LIMIT, SUCCESS
+from apbot.ui.style import NAME_LIMIT, SUCCESS, WARNING
 from apbot.ui.tracker import hint_status_label
 
 if TYPE_CHECKING:
@@ -140,13 +140,29 @@ class FriendAnswerButton(discord.ui.DynamicItem[discord.ui.Button], template=rf"
         lang = language_of(interaction.locale)
         token = bot.access.user_token(interaction)  # not linked: say so before anything shows as "thinking"
         await interaction.response.defer(ephemeral=True, thinking=True)
+        user = interaction.user.id
+        # The message can be old. The manager's decline deletes whatever row joins the two people, so a request that
+        # was answered meanwhile (here or in the manager) must not be declined: that would end the friendship.
+        bot.friend_directory.forget(user)
+        overview = await bot.access.call_as(
+            interaction, token, lambda user_token: bot.friend_directory.overview(user, user_token)
+        )
+        if self._other_id not in {friend.id for friend in overview.incoming}:
+            await _remove_buttons(interaction)
+            notice = notice_embed(t("This friend request is no longer open", lang), WARNING)
+            await reply(interaction, embed=notice, ephemeral=True)
+            return
         if self._accepting:
-            await bot.access.call_as(interaction, token, lambda user_token: bot.manager.accept_friend(user_token, self._other_id))
+            await bot.access.call_as(
+                interaction, token, lambda user_token: bot.manager.accept_friend(user_token, self._other_id)
+            )
             notice = notice_embed(t("You are friends now", lang), SUCCESS)
         else:
-            await bot.access.call_as(interaction, token, lambda user_token: bot.manager.remove_friend(user_token, self._other_id))
+            await bot.access.call_as(
+                interaction, token, lambda user_token: bot.manager.remove_friend(user_token, self._other_id)
+            )
             notice = notice_embed(t("You declined the friend request", lang))
-        bot.friend_directory.forget(interaction.user.id)
+        bot.friend_directory.forget(user)
         await _remove_buttons(interaction)
         await reply(interaction, embed=notice, ephemeral=True)
 

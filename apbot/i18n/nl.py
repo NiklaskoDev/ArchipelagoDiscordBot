@@ -281,6 +281,7 @@ MESSAGES: dict[str, str] = {
     "There is nothing left to release.": "Er valt niets meer vrij te geven.",
     "These games need it to generate: {games}": "Deze spellen hebben die nodig om te genereren: {games}",
     "This command only works in a server": "Dit commando werkt alleen op een server",
+    "This friend request is no longer open": "Dit vriendschapsverzoek staat niet meer open",
     "This game has no open thread in this server": "Dit spel heeft geen open thread op deze server",
     "This manager account is already linked to another Discord account. Unlink it there first": "Dit manageraccount is al gekoppeld aan een ander Discord-account. Ontkoppel het eerst daar",
     "This manager has no friends feature yet. Ask an admin to update the Archipelago Manager.": "Deze manager heeft nog geen vriendenfunctie. Vraag een beheerder om de Archipelago Manager bij te werken.",
