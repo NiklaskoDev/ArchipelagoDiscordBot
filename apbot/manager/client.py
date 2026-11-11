@@ -5,7 +5,7 @@ The token only ever travels in the Authorization header: it is not part of a URL
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 import httpx
@@ -154,6 +154,16 @@ class ManagerClient:
     async def restart(self, token: str, game_id: int) -> dict:
         return await self._post(f"/api/games/{int(game_id)}/restart", token, timeout=CONTROL_TIMEOUT)
 
+    async def archive_game(self, token: str, game_id: int, archived: bool) -> dict:
+        """Moves a game to the archive (it stops its server) or back out of it."""
+        return await self._post(
+            f"/api/games/{int(game_id)}/archive", token, timeout=CONTROL_TIMEOUT, body={"archived": bool(archived)}
+        )
+
+    async def delete_game(self, token: str, game_id: int) -> dict:
+        """Deletes the game with its files, save and history. Not retried, like every change."""
+        return await self._send("DELETE", f"/api/games/{int(game_id)}", token, timeout=CONTROL_TIMEOUT)
+
     async def activity(self, token: str, game_id: int, after: int) -> dict:
         """The activity feed of a game: `{"entries": [...], "last": int}`, the entries numbered after `after`."""
         return await self._get(f"/api/games/{int(game_id)}/activity?after={max(int(after), 0)}", token)
@@ -212,6 +222,37 @@ class ManagerClient:
         """Offers a slot to the user named `to`, or to whoever takes it when `to` is None."""
         path = f"/api/games/{int(game_id)}/slots/{int(slot)}/handover"
         return await self._put(path, token, {"to": to, "note": note})
+
+    # --- generation -------------------------------------------------------------------------------------------------
+    async def start_job(
+        self,
+        token: str,
+        config_ids: Sequence[int],
+        *,
+        name: str | None,
+        spoiler: int,
+        race: bool,
+        seed: int | None,
+        host_after: bool,
+    ) -> dict:
+        """Queues the generation of a game from saved configs (the person's own, and ones friends share with them)."""
+        body = {
+            "config_ids": [int(config_id) for config_id in config_ids],
+            "name": name,
+            "spoiler": int(spoiler),
+            "race": bool(race),
+            "seed": None if seed is None else int(seed),
+            "host_after": bool(host_after),
+        }
+        return await self._post("/api/jobs", token, body=body)
+
+    async def job(self, token: str, job_id: int, *, quick: bool = False) -> dict:
+        path = f"/api/jobs/{int(job_id)}"
+        return await self._get(path, token, timeout=QUICK_TIMEOUT if quick else None, retry=not quick)
+
+    async def cancel_job(self, token: str, job_id: int) -> dict:
+        """Cancels a queued or running job; the manager answers 409 when it is over already."""
+        return await self._post(f"/api/jobs/{int(job_id)}/cancel", token)
 
     # --- sign-ups and configs ---------------------------------------------------------------------------------------
     async def signup(self, token: str, signup_id: int, *, quick: bool = False) -> dict:

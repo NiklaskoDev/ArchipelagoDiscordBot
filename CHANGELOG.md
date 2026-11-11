@@ -4,6 +4,8 @@ Versions follow `{major}.{minor}.{hotfix}[-prN]` — see `docs/ai/versioning.md`
 Sections per version: Added, Changed, Fixed, Removed, Security.
 
 ## [Unreleased]
+### Added
+- `/generate` generates a game from your configs and follows it; `/game_archive` moves a game to the archive and back; `/game_delete` deletes one. All act as you, after a confirmation for archive and delete.
 
 ## [0.2.0] - 2026-11-11
 ### Added

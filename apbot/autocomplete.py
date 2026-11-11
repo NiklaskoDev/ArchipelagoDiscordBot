@@ -67,6 +67,38 @@ async def game_choices_visible(interaction: discord.Interaction, current: str) -
     ]
 
 
+async def _games_the_person_may(interaction: discord.Interaction, keep: Callable[[GameSummary], bool]) -> list[GameSummary]:
+    """The games the person's own account sees and `keep` accepts. Without a fresh list from the manager: the last one
+    kept, or none."""
+    bot: ApBot = interaction.client
+    owner = interaction.user.id
+    try:
+        mine = await bot.my_games.games(owner, bot.access.user_token(interaction), quick=True)
+    except (NotLinkedError, UserFacingError, ManagerError, TypeError) as exc:
+        log.debug("No games to suggest: %s", exc)
+        mine = bot.my_games.cached(owner) or ()
+    return [game for game in mine if keep(game)]
+
+
+async def archive_game_choices(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """The games the person may move to the archive, or (for the action "restore") take out of it."""
+    restoring = getattr(interaction.namespace, "action", None) == "restore"
+
+    def keep(game: GameSummary) -> bool:
+        if not game.can_archive:
+            return False
+        if restoring:
+            return game.finished_at is not None and game.return_blocked is None
+        return game.finished_at is None
+
+    return game_choices(await _games_the_person_may(interaction, keep), current)
+
+
+async def delete_game_choices(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """The games the person may delete."""
+    return game_choices(await _games_the_person_may(interaction, lambda game: game.can_manage), current)
+
+
 def _matches(name: str, current: str) -> bool:
     return current.strip().casefold() in name.casefold()
 

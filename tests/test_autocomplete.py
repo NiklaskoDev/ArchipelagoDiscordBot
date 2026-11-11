@@ -3,7 +3,9 @@ from fakes import BOT_TOKEN, SITE_URL, USER_TOKEN, FakeInteraction, by_token, ga
 
 from apbot.autocomplete import (
     LOADING_VALUE,
+    archive_game_choices,
     claimable_slot_choices,
+    delete_game_choices,
     game_choices_mine,
     game_choices_visible,
     is_loading_choice,
@@ -11,6 +13,7 @@ from apbot.autocomplete import (
     location_choices,
     slot_choices_mine,
 )
+from apbot.manager.errors import ManagerUnavailable
 from apbot.manager.views import parse_games, parse_user_games
 
 CLIENT = "/api/games/7/slots/2/client"
@@ -249,3 +252,81 @@ async def test_the_personal_list_for_suggestions_is_asked_quick(bot, manager):
     bot.my_games.games = spy
     await game_choices_visible(FakeInteraction(bot), "")
     assert asked == [True]
+
+
+# --- the games the person may archive, restore or delete ----------------------------------------------------------------------
+def rights(game_id, name, **extra):
+    return game_json(game_id, name, **{"can_manage": False, "can_archive": False, **extra})
+
+
+def archive_games(manager):
+    manager.add(
+        "GET",
+        "/api/games",
+        [
+            rights(1, "Running A", can_archive=True, can_manage=True),
+            rights(2, "Running B", can_archive=True),
+            rights(3, "Not Mine", can_manage=True),
+            rights(4, "Old Archived", can_archive=True, can_manage=True, finished_at=5.0, outcome="finished"),
+            rights(5, "Blocked", can_archive=True, finished_at=6.0, outcome="finished", return_blocked="finished"),
+            rights(6, "Version Gone", can_archive=True, finished_at=7.0, return_blocked="version"),
+            rights(7, "Aborted", can_archive=True, finished_at=8.0, outcome="aborted"),
+        ],
+    )
+
+
+async def test_to_archive_only_running_games_the_person_may_archive_are_offered(bot, manager):
+    link(bot)
+    archive_games(manager)
+    choices = await archive_game_choices(typing(bot, {"action": "archive"}), "")
+    assert sorted(values(choices)) == [("Running A", "1"), ("Running B", "2")]
+    assert values(await archive_game_choices(typing(bot), "b")) == [("Running B", "2")]  # no action typed yet
+
+
+async def test_to_restore_only_archived_games_that_may_leave_are_offered(bot, manager):
+    link(bot)
+    archive_games(manager)
+    choices = await archive_game_choices(typing(bot, {"action": "restore"}), "")
+    assert sorted(values(choices)) == [("Aborted", "7"), ("Old Archived", "4")]
+
+
+async def test_the_games_are_asked_for_as_the_person_and_quickly_and_only_once_a_minute(bot, manager):
+    link(bot)
+    archive_games(manager)
+    await archive_game_choices(typing(bot), "")
+    await delete_game_choices(typing(bot), "")
+    [request] = manager.requests
+    assert request.headers["Authorization"] == f"Bearer {USER_TOKEN}" and request.extensions["timeout"]["read"] == 2
+
+
+async def test_to_delete_every_game_the_person_manages_is_offered_whatever_its_state(bot, manager):
+    link(bot)
+    archive_games(manager)
+    choices = await delete_game_choices(typing(bot), "")
+    assert sorted(values(choices)) == [("Not Mine", "3"), ("Old Archived", "4"), ("Running A", "1")]
+    assert values(await delete_game_choices(typing(bot), "old")) == [("Old Archived", "4")]
+
+
+@pytest.mark.parametrize("suggest", [archive_game_choices, delete_game_choices])
+async def test_a_manager_that_does_not_answer_gives_no_suggestions_and_no_error(bot, manager, suggest):
+    link(bot)
+    manager.add("GET", "/api/games", (503, {"detail": "busy"}))
+    assert await suggest(typing(bot), "") == []
+
+
+@pytest.mark.parametrize("suggest", [archive_game_choices, delete_game_choices])
+async def test_without_a_link_there_are_no_suggestions_and_nothing_is_asked(bot, manager, suggest):
+    assert await suggest(typing(bot), "") == []
+    assert manager.requests == []
+
+
+async def test_when_the_manager_does_not_answer_the_last_list_kept_is_used(bot, manager):
+    link(bot)
+
+    async def fail(*args, **kwargs):
+        raise ManagerUnavailable(None, "down")
+
+    bot.my_games.games = fail
+    bot.my_games.cached = lambda owner: tuple(parse_games([rights(1, "Kept", can_archive=True, can_manage=True)]))
+    assert values(await archive_game_choices(typing(bot), "")) == [("Kept", "1")]
+    assert values(await delete_game_choices(typing(bot), "")) == [("Kept", "1")]

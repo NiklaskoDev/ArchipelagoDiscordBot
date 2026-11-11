@@ -249,6 +249,19 @@ def game_state_embed(game: GameSummary, lang: str) -> discord.Embed:
     )
 
 
+def game_archived_embed(game: GameSummary, lang: str) -> discord.Embed:
+    """A game after it was moved into the archive or back out of it, as the manager answered."""
+    embed = game_state_embed(game, lang)
+    name = safe_text(game.name, NAME_LIMIT)
+    if game.finished_at is None:
+        line = t("**{game}** is back among the running games", lang, game=name)
+    else:
+        outcome = _label(_OUTCOME_LABELS, game.outcome or "finished", lang).lower()
+        line = t("**{game}** is in the archive ({outcome})", lang, game=name, outcome=outcome)
+    embed.description = f"{embed.description}\n{line}"
+    return embed
+
+
 def server_answer_embed(lines: Sequence[str], hidden: int, lang: str) -> discord.Embed:
     """What the game's server answered a command: its lines (already escaped), and how many were left out."""
     if not lines:

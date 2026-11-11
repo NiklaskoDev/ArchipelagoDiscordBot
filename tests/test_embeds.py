@@ -1,12 +1,28 @@
 import json
 
 import discord
-from fakes import SECRETS, SITE_URL, game_json, json_text, signup_json, slot_json
+import pytest
+from fakes import SECRETS, SITE_URL, game_json, job_json, json_text, signup_json, slot_json
 
-from apbot.manager.views import listed_games, parse_game_detail, parse_games, parse_signups
-from apbot.ui.embeds import error_embed, game_detail_embeds, games_list_embed, private_games_embed, signups_embed
+from apbot.manager.views import (
+    listed_games,
+    parse_game_detail,
+    parse_game_summary,
+    parse_games,
+    parse_job,
+    parse_signups,
+)
+from apbot.ui.embeds import (
+    error_embed,
+    game_archived_embed,
+    game_detail_embeds,
+    games_list_embed,
+    private_games_embed,
+    signups_embed,
+)
 from apbot.ui.format import ZERO_WIDTH_SPACE
-from apbot.ui.style import DESCRIPTION, ERROR, FIELD_VALUE, FIELDS
+from apbot.ui.generate import config_name, job_embed
+from apbot.ui.style import ACCENT, DESCRIPTION, ERROR, FIELD_VALUE, FIELDS, SUCCESS, WARNING
 from apbot.ui.views import manager_page_url, open_in_manager_view
 
 
@@ -265,3 +281,106 @@ def test_private_games_never_show_a_password():
     parsed = listed_games(parse_games([game_json(1, "Secret", visibility="participants")]))
     text = json_text(private_games_embed(parsed, "en"))
     assert all(isinstance(secret, str) and secret not in text for secret in (SECRETS["password"], SECRETS["server_password"]))
+
+
+# --- a generation job ----------------------------------------------------------------------------------------------------
+def job(status="queued", **overrides):
+    return parse_job(job_json(9, status, **overrides))
+
+
+def test_a_queued_job_shows_its_place_in_the_queue():
+    embed = job_embed(job(queue_position=3), "en")
+    assert (embed.title, embed.description, embed.colour) == (
+        "New game", "Waiting to be generated (place 3 in the queue)", ACCENT,
+    )
+    assert job_embed(job(), "en").description == "Waiting to be generated"
+
+
+def test_a_running_job_says_it_is_generating():
+    embed = job_embed(job("running", name="Friday Run"), "en")
+    assert (embed.title, embed.description, embed.colour) == ("Friday Run", "Generating…", ACCENT)
+
+
+def test_a_succeeded_job_says_the_game_is_ready_and_whether_its_server_starts():
+    started = job_embed(job("succeeded"), "en")
+    assert (started.description, started.colour) == ("Generated. The game is ready. Its server starts now.", SUCCESS)
+    assert job_embed(job("succeeded", host_after=False), "en").description == "Generated. The game is ready."
+
+
+def test_a_failed_job_shows_what_the_generator_said_escaped_and_cut():
+    embed = job_embed(job("failed", error="*Boom* @everyone " + "x" * 2000), "en")
+    assert embed.colour == ERROR and embed.description.startswith("Generation failed\n")
+    assert "@everyone" not in embed.description and len(embed.description) < 1000
+    assert job_embed(job("failed"), "en").description == "Generation failed"
+
+
+def test_a_cancelled_job_says_so_in_the_warning_colour():
+    embed = job_embed(job("cancelled"), "en")
+    assert (embed.description, embed.colour) == ("Cancelled", WARNING)
+
+
+def test_an_unknown_status_is_shown_as_it_is():
+    assert job_embed(job("paused"), "en").description == "paused"
+
+
+def test_the_players_are_the_config_names_and_a_friends_config_names_its_owner():
+    players = [
+        {"filename": "alice.yaml", "user_id": 10, "owner": "alice"},
+        {"filename": "bob.yml", "user_id": 11, "owner": "bob"},
+        {"filename": "gone.yaml", "user_id": None, "owner": None},
+        {"filename": "carol.txt", "user_id": 12, "owner": None},
+    ]
+    [field] = job_embed(job(players=players), "en", me=10).fields
+    assert field.name == "Players"
+    assert field.value.split("\n") == ["alice", "bob — bob", "gone", "carol.txt"]
+    [without_me] = job_embed(job(players=players[:1]), "en").fields
+    assert without_me.value == "alice — alice"  # nobody is known to be the asker
+
+
+def test_many_players_stay_inside_the_field_limit_and_are_counted():
+    players = [{"filename": f"player-{n}-{'x' * 50}.yaml", "user_id": 10, "owner": "alice"} for n in range(60)]
+    [field] = job_embed(job(players=players), "en", me=10).fields
+    assert len(field.value) <= FIELD_VALUE and "more" in field.value.split("\n")[-1]
+
+
+def test_a_job_without_players_has_no_players_field():
+    assert job_embed(job(players=[]), "en").fields == []
+
+
+def test_a_job_embed_is_localized_and_escapes_the_name():
+    embed = job_embed(job("running", name="<@999> *x*"), "de")
+    assert embed.description == "Wird generiert…" and "<@999>" not in embed.title
+    assert job_embed(job(), "fr").description == "En attente de génération"
+
+
+@pytest.mark.parametrize(
+    ("filename", "name"),
+    [("a.yaml", "a"), ("A.YML", "A"), ("a.b.yaml", "a.b"), (".yaml", ".yaml"), ("a.txt", "a.txt"), ("a", "a")],
+)
+def test_a_config_is_named_without_its_extension(filename, name):
+    assert config_name(filename) == name
+
+
+# --- a game moved into the archive or out of it --------------------------------------------------------------------------
+def test_a_game_in_the_archive_names_its_outcome():
+    finished = parse_game_summary(game_json(7, "Friday Run", state="stopped", finished_at=5.0, outcome="finished"))
+    embed = game_archived_embed(finished, "en")
+    assert (embed.title, embed.description) == ("Friday Run", "Stopped\n**Friday Run** is in the archive (finished)")
+    aborted = parse_game_summary(game_json(7, "Friday Run", state="stopped", finished_at=5.0, outcome="aborted"))
+    assert game_archived_embed(aborted, "en").description.endswith("is in the archive (aborted)")
+
+
+def test_a_game_in_the_archive_without_an_outcome_counts_as_finished():
+    game = parse_game_summary(game_json(7, state="stopped", finished_at=5.0, outcome=None))
+    assert game_archived_embed(game, "en").description.endswith("(finished)")
+
+
+def test_a_game_taken_out_of_the_archive_is_back_among_the_running_ones():
+    game = parse_game_summary(game_json(7, "Friday Run", state="stopped"))
+    assert game_archived_embed(game, "en").description == "Stopped\n**Friday Run** is back among the running games"
+
+
+def test_the_archive_answer_is_localized_and_the_name_escaped():
+    game = parse_game_summary(game_json(7, "*x* <@999>", state="stopped", finished_at=5.0, outcome="aborted"))
+    embed = game_archived_embed(game, "de")
+    assert "ist im Archiv (abgebrochen)" in embed.description and "<@999>" not in embed.description

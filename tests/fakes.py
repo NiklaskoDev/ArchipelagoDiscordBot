@@ -183,6 +183,18 @@ def config_json(config_id: int = 40, name: str = "alice.yaml", **overrides) -> d
     return {**config, **overrides}
 
 
+def job_json(job_id: int = 9, status: str = "queued", **overrides) -> dict:
+    """The manager's answer to POST /api/jobs and GET /api/jobs/{id}: a generation job with its players."""
+    job = {
+        "id": job_id, "name": None, "status": status, "created_at": 1_700_000_000.0, "started_at": None,
+        "finished_at": None, "game_id": None, "error": None, "options": {}, "host_after": True, "test": False,
+        "created_by": 10, "creator": "alice", "queue_position": None, "meta": None, "signup": None,
+        "players": [{"filename": "alice.yaml", "user_id": 10, "owner": "alice", "config_id": 40, "names": ["Alice"],
+                     "games": ["Timespinner"], "error": None}],
+    }
+    return {**job, **overrides}
+
+
 def check_json(ok: bool = True, **overrides) -> dict:
     check = {"ok": ok, "errors": [], "warnings": [],
              "players": [{"name": "Alice", "games": ["Timespinner"], "errors": [], "warnings": []}],

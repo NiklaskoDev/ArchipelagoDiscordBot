@@ -43,7 +43,7 @@ For people with the *Manage Server* permission, and for the admin role if the se
 | `/setup show` | The settings of this server and a check of the manager. |
 | `/setup manager` | Checks the manager now: reachable, version, the bot's token and account, web address. |
 | `/setup channel kind: channel:` | Choose the games, sign-ups or overview channel. The bot checks it has the permissions it will need there and lists any that are missing. |
-| `/setup role kind: role:`, `/setup role_clear kind:` | The organizer role (limits `/start`, `/stop`, `/restart`; without one, everyone linked may try) and the admin role (may use `/setup` without *Manage Server*). |
+| `/setup role kind: role:`, `/setup role_clear kind:` | The organizer role (limits `/start`, `/stop`, `/restart`, `/generate`, `/game_archive`, `/game_delete` and `/signup open`, `close` and `test`; without one, everyone linked may try) and the admin role (may use `/setup` without *Manage Server*). |
 | `/setup language language:` | The language of the bot's posts in this server. |
 | `/setup timezone timezone:` | The time zone for dates typed in this server. |
 | `/setup feed game:` | Choose which kinds of activity the thread of a game shows. |
@@ -95,6 +95,23 @@ and left. That is why joins and leaves are off in game threads by default.
 
 `/say !release` and `/say !collect` go straight to the game's server and skip the confirmation that `/release` and
 `/collect` ask for.
+
+### Generating and archiving
+
+These commands act as you, with your linked token, and the manager decides what you may do. They need a token with
+access *Read and change*, and they only work in a server (the replies are private). The configs are the ones saved in
+your manager library; they are picked from a list as you type.
+
+| Command | Who | What |
+|---|---|---|
+| `/generate config: config2: … config10: name: spoiler: race: seed: start:` | linked users, organizer role if set | Generates a game from up to ten of your configs and follows it in the reply: the place in the queue, then the result, with a button to open the game in the manager and a *Cancel generation* button while it waits or runs. `spoiler` is none, basic (default), playthrough or full; `seed` is a whole number; `start` (default on) starts the game's server once it is generated. If the manager says no, its reason is shown, for example a game that is not installed or one of the limits below. |
+| `/game_archive action: game:` | linked users, organizer role if set | Moves a game to the archive (its server stops; it is listed as finished if every player reached their goal, otherwise as aborted) or takes it out again (`action: restore`), after a confirmation. Choose the action first, so the list only shows fitting games. Only whoever runs the game, or the player who generated it, may. |
+| `/game_delete game:` | linked users, organizer role if set | Deletes a game with its files, save and history, after a confirmation that says it cannot be undone. Only the organizer of the game and administrators may. |
+
+The manager limits what a plain player can generate (by default 15 worlds, 3 unfinished games, 1 running at a time),
+and may allow generating to administrators only. The bot follows a generation for up to 14 minutes (Discord stops
+accepting edits of a reply after 15); after that the reply links to the job in the manager and the game shows up in
+`/games` when it is ready.
 
 ### Sign-ups
 

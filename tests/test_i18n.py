@@ -9,6 +9,7 @@ from i18n_scan import scan
 
 from apbot.cogs.alerts import AlertsCog
 from apbot.cogs.games import GamesCog
+from apbot.cogs.generate import GenerateCog
 from apbot.cogs.linking import LinkingCog
 from apbot.cogs.setup import SetupCog
 from apbot.cogs.signups import SignupsCog
@@ -117,6 +118,7 @@ async def command_payloads(tmp_path, manager) -> list[dict]:
     await bot.add_cog(TrackerCog(bot))
     await bot.add_cog(TextClientCog(bot))
     await bot.add_cog(SlotsCog(bot))
+    await bot.add_cog(GenerateCog(bot))
     translator = BotTranslator()
     payloads = [await command.get_translated_payload(bot.tree, translator) for command in bot.tree.get_commands()]
     await bot.close()
@@ -126,6 +128,7 @@ async def command_payloads(tmp_path, manager) -> list[dict]:
 COMMAND_NAMES = {
     "games", "game", "signups", "signup", "wake", "start", "stop", "restart", "link", "unlink", "mydata", "setup", "alerts",
     "tracker", "hints", "hint", "hint_location", "remaining", "say", "release", "collect", "status", "claim", "handover",
+    "generate", "game_archive", "game_delete",
 }
 LOCALES = {"de", "fr", "nl"}
 
@@ -182,7 +185,7 @@ async def test_setup_is_server_only_and_needs_manage_server_by_default(tmp_path,
 
 async def test_commands_limited_to_organizers_only_work_in_a_server(tmp_path, manager):
     payloads = {p["name"]: p for p in await command_payloads(tmp_path, manager)}
-    for name in ("start", "stop", "restart"):
+    for name in ("start", "stop", "restart", "generate", "game_archive", "game_delete"):
         assert payloads[name]["dm_permission"] is False, name
     for name in ("games", "game", "signups", "wake", "link", "unlink", "mydata"):
         assert payloads[name]["dm_permission"] is True, name
@@ -233,3 +236,27 @@ async def test_the_signup_commands_have_their_options_limits_and_suggestions(tmp
     assert (slots["min_value"], slots["max_value"]) == (1, 20) and not slots.get("required")
     assert options["open"]["description"]["max_length"] == 2000 and options["open"]["name"]["max_length"] == 120
     assert signup["dm_permission"] is True  # show, join and withdraw work in direct messages; the others check the server
+
+
+async def test_the_generate_command_has_ten_config_options_with_suggestions_and_its_choices(tmp_path, manager):
+    payloads = {p["name"]: p for p in await command_payloads(tmp_path, manager)}
+    options = {o["name"]: o for o in payloads["generate"]["options"]}
+    configs = ["config"] + [f"config{n}" for n in range(2, 11)]
+    assert list(options) == [*configs, "name", "spoiler", "race", "seed", "start"]
+    assert all(options[name]["autocomplete"] for name in configs)
+    assert options["config"]["required"] is True
+    assert not any(options[name].get("required") for name in options if name != "config")
+    assert options["name"]["max_length"] == 120 and options["seed"]["max_length"] == 18
+    assert [(c["name"], c["value"]) for c in options["spoiler"]["choices"]] == [
+        ("none", 0), ("basic", 1), ("playthrough", 2), ("full", 3)
+    ]
+
+
+async def test_the_archive_and_delete_commands_have_their_options_choices_and_suggestions(tmp_path, manager):
+    payloads = {p["name"]: p for p in await command_payloads(tmp_path, manager)}
+    archive = {o["name"]: o for o in payloads["game_archive"]["options"]}
+    assert list(archive) == ["action", "game"]  # the action first, so the suggestions know whether to restore
+    assert [c["value"] for c in archive["action"]["choices"]] == ["archive", "restore"]
+    assert archive["game"]["autocomplete"] and archive["game"]["required"] and archive["action"]["required"]
+    [delete] = payloads["game_delete"]["options"]
+    assert (delete["name"], delete["autocomplete"], delete["required"]) == ("game", True, True)

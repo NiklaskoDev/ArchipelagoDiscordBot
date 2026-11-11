@@ -1,3 +1,5 @@
+import json
+
 import httpx
 import pytest
 from fakes import BOT_TOKEN, FakeManager
@@ -181,3 +183,81 @@ async def test_a_plain_game_list_is_retried_when_the_manager_is_busy(manager: Fa
     manager.add("GET", "/api/games", (503, {"detail": "busy"}), [])
     assert await manager.client.list_games(BOT_TOKEN) == []
     assert len(manager.requests) == 2
+
+
+# --- generating, archiving and deleting --------------------------------------------------------------------------------
+async def test_a_job_is_started_with_exactly_these_fields_and_never_retried(manager: FakeManager):
+    manager.add("POST", "/api/jobs", (503, {"detail": "busy"}), {"id": 9})
+    call = manager.client.start_job(
+        BOT_TOKEN, [40, "41"], name="Friday", spoiler=2, race=True, seed=123, host_after=False
+    )
+    with pytest.raises(ManagerUnavailable):
+        await call
+    [request] = manager.requests
+    assert (request.method, request.url.path) == ("POST", "/api/jobs")
+    assert request.headers["Authorization"] == f"Bearer {BOT_TOKEN}" and BOT_TOKEN not in str(request.url)
+    assert json.loads(request.content) == {
+        "config_ids": [40, 41], "name": "Friday", "spoiler": 2, "race": True, "seed": 123, "host_after": False,
+    }
+
+
+async def test_a_job_without_name_or_seed_sends_nulls(manager: FakeManager):
+    manager.add("POST", "/api/jobs", {"id": 9})
+    await manager.client.start_job(BOT_TOKEN, [40], name=None, spoiler=1, race=False, seed=None, host_after=True)
+    assert json.loads(manager.requests[0].content) == {
+        "config_ids": [40], "name": None, "spoiler": 1, "race": False, "seed": None, "host_after": True,
+    }
+
+
+async def test_a_job_is_read_by_its_number_and_a_quick_look_gives_up_after_two_seconds(manager: FakeManager):
+    manager.add("GET", "/api/jobs/9", {"id": 9})
+    assert await manager.client.job(BOT_TOKEN, 9) == {"id": 9}
+    await manager.client.job(BOT_TOKEN, 9, quick=True)
+    plain, quick = manager.requests
+    assert (plain.method, plain.url.path) == ("GET", "/api/jobs/9") and plain.extensions["timeout"]["read"] == 10
+    assert quick.extensions["timeout"]["read"] == 2
+
+
+async def test_cancelling_a_job_is_a_post_without_a_body_and_keeps_the_409_detail(manager: FakeManager):
+    manager.add("POST", "/api/jobs/9/cancel", (409, {"detail": "That job is not running or queued"}), {"id": 9})
+    with pytest.raises(Conflict) as raised:
+        await manager.client.cancel_job(BOT_TOKEN, 9)
+    assert raised.value.detail == "That job is not running or queued"
+    [request] = manager.requests
+    assert (request.method, request.url.path, request.content) == ("POST", "/api/jobs/9/cancel", b"")
+    assert len(manager.requests) == 1
+
+
+@pytest.mark.parametrize("archived", [True, False])
+async def test_archiving_posts_the_flag_and_waits_for_the_server_to_stop(manager: FakeManager, archived):
+    manager.add("POST", "/api/games/7/archive", (503, {"detail": "busy"}), {"id": 7})
+    with pytest.raises(ManagerUnavailable):
+        await manager.client.archive_game(BOT_TOKEN, 7, archived)
+    [request] = manager.requests
+    assert (request.method, request.url.path) == ("POST", "/api/games/7/archive")
+    assert json.loads(request.content) == {"archived": archived}
+    assert request.extensions["timeout"]["read"] == 60  # CONTROL_TIMEOUT: archiving stops the server
+
+
+async def test_deleting_a_game_is_a_delete_that_is_not_retried(manager: FakeManager):
+    manager.add("DELETE", "/api/games/7", (503, {"detail": "busy"}), {"ok": True})
+    with pytest.raises(ManagerUnavailable):
+        await manager.client.delete_game(BOT_TOKEN, 7)
+    [request] = manager.requests
+    assert (request.method, request.url.path, request.content) == ("DELETE", "/api/games/7", b"")
+    assert request.headers["Authorization"] == f"Bearer {BOT_TOKEN}"
+    assert request.extensions["timeout"]["read"] == 60
+
+
+@pytest.mark.parametrize("bad", ["7/../../tokens", "x"])
+async def test_the_new_calls_take_numbers_in_their_paths_only(manager: FakeManager, bad):
+    calls = (
+        lambda: manager.client.job(BOT_TOKEN, bad),
+        lambda: manager.client.cancel_job(BOT_TOKEN, bad),
+        lambda: manager.client.archive_game(BOT_TOKEN, bad, True),
+        lambda: manager.client.delete_game(BOT_TOKEN, bad),
+    )
+    for call in calls:
+        with pytest.raises(ValueError):
+            await call()
+    assert manager.requests == []

@@ -2,11 +2,14 @@ import dataclasses
 import json
 
 import pytest
-from fakes import SECRETS, game_json, signup_json, slot_json
+from fakes import SECRETS, game_json, job_json, signup_json, slot_json
 
 from apbot.manager.views import (
+    JOB_FINISHED,
     GameDetail,
     GameSummary,
+    JobPlayer,
+    JobView,
     SignupSummary,
     SlotView,
     listed_games,
@@ -14,6 +17,7 @@ from apbot.manager.views import (
     parse_game_detail,
     parse_game_summary,
     parse_games,
+    parse_job,
     parse_signups,
 )
 
@@ -104,6 +108,84 @@ def test_views_hold_exactly_the_whitelisted_fields():
     summary = {
         "id", "name", "state", "world_count", "player_count", "claimed_count", "goal_count", "address", "tls",
         "ap_version", "start_at", "created_at", "finished_at", "outcome", "visibility",
+        "can_manage", "can_archive", "return_blocked",
     }
     assert {f.name for f in dataclasses.fields(GameSummary)} == summary
     assert {f.name for f in dataclasses.fields(GameDetail)} == summary | {"slots", "checked", "total"}
+
+
+# --- what the account may do with a game, and generation jobs ----------------------------------------------------------
+def test_a_game_carries_what_the_asking_account_may_do_with_it():
+    game = parse_game_summary(game_json(can_manage=True, can_archive=True, return_blocked="version"))
+    assert (game.can_manage, game.can_archive, game.return_blocked) == (True, True, "version")
+    detail = parse_game_detail(game_json(can_manage=True, can_archive=True, return_blocked="finished"))
+    assert (detail.can_manage, detail.can_archive, detail.return_blocked) == (True, True, "finished")
+
+
+def test_what_the_account_may_do_defaults_to_nothing():
+    game = parse_game_summary({"id": 1})
+    assert (game.can_manage, game.can_archive, game.return_blocked) == (False, False, None)
+    plain = parse_game_summary(game_json())  # the manager sends return_blocked: false when nothing blocks it
+    assert (plain.can_manage, plain.can_archive, plain.return_blocked) == (False, False, None)
+
+
+@pytest.mark.parametrize("status", ["queued", "running", "succeeded", "failed", "cancelled"])
+def test_every_job_status_is_kept(status):
+    assert parse_job(job_json(status=status)).status == status
+
+
+def test_an_unknown_job_status_is_kept_as_text_and_a_missing_one_counts_as_queued():
+    assert parse_job(job_json(status="paused")).status == "paused"
+    assert parse_job({"id": 3}).status == "queued"
+
+
+def test_a_job_has_its_values_and_players():
+    job = parse_job(
+        job_json(
+            9,
+            "running",
+            name="Friday",
+            game_id=5,
+            error="Boom",
+            queue_position=2,
+            host_after=False,
+            players=[
+                {"filename": "alice.yaml", "user_id": 10, "owner": "alice", "config_id": 40},
+                {"filename": "gone.yaml", "user_id": None, "owner": None, "config_id": None},
+                "junk",
+                {"user_id": "x"},
+            ],
+        )
+    )
+    assert job == JobView(
+        id=9, name="Friday", status="running", game_id=5, error="Boom", queue_position=2, host_after=False,
+        players=(
+            JobPlayer(user_id=10, owner="alice", config_id=40, filename="alice.yaml"),
+            JobPlayer(user_id=None, owner=None, config_id=None, filename="gone.yaml"),
+            JobPlayer(user_id=None, owner=None, config_id=None, filename="?"),
+        ),
+    )
+
+
+def test_a_job_without_optional_values_has_none_and_no_players():
+    job = parse_job({"id": 3, "status": "queued", "players": "nope"})
+    assert (job.name, job.game_id, job.error, job.queue_position, job.host_after, job.players) == (
+        None, None, None, None, False, (),
+    )
+
+
+@pytest.mark.parametrize("raw", [{}, {"id": -1}, {"id": "3"}, {"id": True}, None, [], "job"])
+def test_an_answer_that_is_not_a_job_is_refused(raw):
+    with pytest.raises(ValueError):
+        parse_job(raw)
+
+
+def test_a_job_is_over_when_it_succeeded_failed_or_was_cancelled():
+    assert JOB_FINISHED == {"succeeded", "failed", "cancelled"}
+
+
+def test_a_job_view_holds_no_log_options_or_meta():
+    assert {f.name for f in dataclasses.fields(JobView)} == {
+        "id", "name", "status", "game_id", "error", "queue_position", "host_after", "players",
+    }
+    assert {f.name for f in dataclasses.fields(JobPlayer)} == {"user_id", "owner", "config_id", "filename"}

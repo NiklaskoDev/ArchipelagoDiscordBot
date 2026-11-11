@@ -63,6 +63,10 @@ class GameSummary:
     finished_at: float | None
     outcome: str | None  # finished | aborted, once the game is in the archive
     visibility: str | None = field(default=None, kw_only=True)  # all | participants; None when the manager did not say
+    # What the asking account may do with the game. Never shown: they only spare a pointless question.
+    can_manage: bool = field(default=False, kw_only=True)
+    can_archive: bool = field(default=False, kw_only=True)
+    return_blocked: str | None = field(default=None, kw_only=True)  # why the game cannot leave the archive
 
 
 @dataclass(frozen=True)
@@ -176,6 +180,33 @@ class UserGame:
     finished_at: float | None
     my_slots: tuple[SlotRef, ...]
     offers: tuple[Offer, ...]
+
+
+@dataclass(frozen=True)
+class JobPlayer:
+    """One config of a generation: whose it is (`owner` is None for a deleted account) and the file it became."""
+
+    user_id: int | None
+    owner: str | None
+    config_id: int | None
+    filename: str
+
+
+JOB_FINISHED = frozenset({"succeeded", "failed", "cancelled"})
+
+
+@dataclass(frozen=True)
+class JobView:
+    """A generation job. `status` is queued, running, succeeded, failed or cancelled (anything else is kept as text)."""
+
+    id: int
+    name: str | None
+    status: str
+    game_id: int | None
+    error: str | None
+    queue_position: int | None
+    host_after: bool
+    players: tuple[JobPlayer, ...]
 
 
 @dataclass(frozen=True)
@@ -295,6 +326,9 @@ def _summary_fields(raw: Mapping) -> dict[str, Any]:
         "finished_at": _number(raw.get("finished_at")),
         "outcome": _text(raw.get("outcome")),
         "visibility": _text(raw.get("visibility")),
+        "can_manage": bool(raw.get("can_manage")),
+        "can_archive": bool(raw.get("can_archive")),
+        "return_blocked": _text(raw.get("return_blocked")),
     }
 
 
@@ -437,6 +471,33 @@ def parse_user_game(raw: Mapping) -> UserGame:
         finished_at=summary["finished_at"],
         my_slots=tuple(ref for ref in map(_slot_ref, my_slots) if ref is not None),
         offers=tuple(offer for offer in map(_offer, offers) if offer is not None),
+    )
+
+
+def _job_player(raw: Any) -> JobPlayer | None:
+    if not isinstance(raw, Mapping):
+        return None
+    return JobPlayer(
+        user_id=_optional_int(raw.get("user_id")),
+        owner=_text(raw.get("owner")),
+        config_id=_optional_int(raw.get("config_id")),
+        filename=_text(raw.get("filename")) or "?",
+    )
+
+
+def parse_job(raw: Any) -> JobView:
+    """Raises ValueError when the answer is not a job (no id)."""
+    job_id = _require_id(raw, "a job")
+    players = raw.get("players") if isinstance(raw.get("players"), list) else []
+    return JobView(
+        id=job_id,
+        name=_text(raw.get("name")),
+        status=_text(raw.get("status")) or "queued",
+        game_id=_optional_int(raw.get("game_id")),
+        error=_text(raw.get("error")),
+        queue_position=_optional_int(raw.get("queue_position")),
+        host_after=bool(raw.get("host_after")),
+        players=tuple(p for p in map(_job_player, players) if p is not None),
     )
 
 

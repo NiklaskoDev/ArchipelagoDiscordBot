@@ -25,6 +25,7 @@ from apbot.services.manager_watch import StartupFailure
 COMMAND_NAMES = {
     "games", "game", "signups", "signup", "wake", "start", "stop", "restart", "link", "unlink", "mydata", "setup", "alerts",
     "tracker", "hints", "hint", "hint_location", "remaining", "say", "release", "collect", "status", "claim", "handover",
+    "generate", "game_archive", "game_delete",
 }
 
 
