@@ -1,6 +1,7 @@
-"""Buttons that keep working after a restart: the answers to a slot offered in a direct message, and the marks for a hint.
+"""Buttons that keep working after a restart: the answers to a slot offered or a friend request in a direct message, and
+the marks for a hint.
 
-The `custom_id` carries game, slot and hint numbers only; who clicked is always the person who pressed the button, and
+The `custom_id` carries game, slot, hint and manager user numbers only; who clicked is always the person who pressed the button, and
 their own linked token is used (never one named in the id).
 """
 
@@ -23,8 +24,12 @@ if TYPE_CHECKING:
 
 ACCEPT_ID = "apbot:ho:accept:{game}:{slot}"
 DECLINE_ID = "apbot:ho:decline:{game}:{slot}"
+FRIEND_ID = "apbot:fr:{action}:{user}"
 HINT_ID = "apbot:hint:{game}:{slot}:{finder}:{location}:{status}"
+ACCEPT = "accept"
+DECLINE = "decline"
 _IDS = r"(?P<game>[0-9]{1,9}):(?P<slot>[0-9]{1,9})"  # [0-9], not \d: that would take any script's digits
+_FRIEND_IDS = r"(?P<action>accept|decline):(?P<user>[0-9]{1,9})"  # the user is the asker's id on the manager
 _HINT_IDS = rf"{_IDS}:(?P<finder>[0-9]{{1,9}}):(?P<location>[0-9]{{1,16}}):(?P<status>10|20|30)"
 
 # What a hint can be marked as, in the order of the buttons: (status the manager takes, label, style)
@@ -108,6 +113,52 @@ def handover_view(game_id: int, slot: int, lang: str) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     view.add_item(HandoverAcceptButton(game_id, slot, lang))
     view.add_item(HandoverDeclineButton(game_id, slot, lang))
+    return view
+
+
+class FriendAnswerButton(discord.ui.DynamicItem[discord.ui.Button], template=rf"apbot:fr:{_FRIEND_IDS}"):
+    """Accepts or declines a friend request. The id names the person who asked; the manager only lets the one who
+    pressed answer a request addressed to them."""
+
+    def __init__(self, action: str, other_id: int, lang: str = "en"):
+        accepting = action == ACCEPT
+        super().__init__(
+            discord.ui.Button(
+                label=t("Accept", lang) if accepting else t("Decline", lang),
+                style=discord.ButtonStyle.primary if accepting else discord.ButtonStyle.secondary,
+                custom_id=FRIEND_ID.format(action=action, user=other_id),
+            )
+        )
+        self._accepting, self._other_id = accepting, other_id
+
+    @classmethod
+    async def from_custom_id(cls, interaction: discord.Interaction, item: discord.ui.Button, match: re.Match[str], /):
+        return cls(match["action"], int(match["user"]), language_of(interaction.locale))
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        bot: ApBot = interaction.client
+        lang = language_of(interaction.locale)
+        token = bot.access.user_token(interaction)  # not linked: say so before anything shows as "thinking"
+        await interaction.response.defer(ephemeral=True, thinking=True)
+        if self._accepting:
+            await bot.access.call_as(interaction, token, lambda user_token: bot.manager.accept_friend(user_token, self._other_id))
+            notice = notice_embed(t("You are friends now", lang), SUCCESS)
+        else:
+            await bot.access.call_as(interaction, token, lambda user_token: bot.manager.remove_friend(user_token, self._other_id))
+            notice = notice_embed(t("You declined the friend request", lang))
+        bot.friend_directory.forget(interaction.user.id)
+        await _remove_buttons(interaction)
+        await reply(interaction, embed=notice, ephemeral=True)
+
+    async def on_error(self, interaction: discord.Interaction, error: Exception) -> None:
+        await interaction.client.on_app_command_error(interaction, error)
+
+
+def friend_request_view(other_id: int, lang: str) -> discord.ui.View:
+    """The Accept and Decline buttons under the direct message about a friend request."""
+    view = discord.ui.View(timeout=None)
+    view.add_item(FriendAnswerButton(ACCEPT, other_id, lang))
+    view.add_item(FriendAnswerButton(DECLINE, other_id, lang))
     return view
 
 

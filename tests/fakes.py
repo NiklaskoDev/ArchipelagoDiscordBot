@@ -195,6 +195,19 @@ def job_json(job_id: int = 9, status: str = "queued", **overrides) -> dict:
     return {**job, **overrides}
 
 
+def friend_json(user_id: int = 20, username: str = "bob", **overrides) -> dict:
+    """One person in the manager's friend list or in a request."""
+    return {"id": user_id, "username": username, **overrides}
+
+
+def friends_json(friends=(), incoming=(), outgoing=(), suggestions=()) -> dict:
+    """The manager's answer to GET /api/friends."""
+    return {
+        "friends": list(friends), "incoming": list(incoming), "outgoing": list(outgoing),
+        "suggestions": list(suggestions),
+    }
+
+
 def check_json(ok: bool = True, **overrides) -> dict:
     check = {"ok": ok, "errors": [], "warnings": [],
              "players": [{"name": "Alice", "games": ["Timespinner"], "errors": [], "warnings": []}],

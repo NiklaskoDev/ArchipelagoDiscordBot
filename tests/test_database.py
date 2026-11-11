@@ -45,12 +45,13 @@ def link(store: LinkStore, discord_id=1, manager_id=10, username="alice", cipher
 # --- migrations --------------------------------------------------------------------------------------------------------
 def test_first_start_applies_the_migrations_and_records_them(tmp_path, clock):
     database = Database(tmp_path / "nested" / "bot.sqlite3", now=clock)  # the folder is created
-    assert database.migrate() == [1, 2, 3]
+    assert database.migrate() == [1, 2, 3, 4]
     rows = database.query_all("SELECT version, name, applied_at FROM schema_migrations ORDER BY version")
     assert [(r["version"], r["name"], r["applied_at"]) for r in rows] == [
         (1, "links_settings", 1000.0),
         (2, "live", 1000.0),
         (3, "signups", 1000.0),
+        (4, "friend_alerts", 1000.0),
     ]
     tables = {r["name"] for r in database.query_all("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert {
@@ -68,7 +69,7 @@ def test_a_second_start_applies_nothing_and_keeps_the_data(tmp_path, clock):
     first.close()
     second = Database(path, now=clock)
     assert second.migrate() == []
-    assert len(second.query_all("SELECT * FROM schema_migrations")) == 3
+    assert len(second.query_all("SELECT * FROM schema_migrations")) == 4
     assert LinkStore(second, now=clock).get(1) is not None
     second.close()
 
@@ -259,3 +260,56 @@ def test_deleting_a_server_removes_only_its_settings(guilds):
     assert guilds.get(5) == GuildSettings(5)
     assert guilds.get(6).language == "fr"
     guilds.delete(5)  # nothing there: no error
+
+
+# --- migration 004: the friend alerts --------------------------------------------------------------------------------------
+OLD_KINDS = ("item_received", "hint_found", "stuck_in_my_world", "game_online", "slot_offered")
+
+
+def migrations_up_to(folder, version: int):
+    """A folder with the real migrations up to `version`, to start from an older database."""
+    folder.mkdir()
+    for path in MIGRATIONS_DIR.glob("*.sql"):
+        if int(path.name[:3]) <= version:
+            (folder / path.name).write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+    return folder
+
+
+def test_a_database_at_version_3_keeps_its_alert_choices_and_learns_the_friend_alerts(tmp_path, clock):
+    path = tmp_path / "bot.sqlite3"
+    old = Database(path, now=clock, migrations_dir=migrations_up_to(tmp_path / "old", 3))
+    assert old.migrate() == [1, 2, 3]
+    link(LinkStore(old, now=clock), 1, 10)
+    link(LinkStore(old, now=clock), 2, 20, "bob")
+    for kind in OLD_KINDS:
+        old.execute("INSERT INTO alert_prefs (discord_user_id, kind) VALUES (1, ?)", (kind,))
+    old.execute("INSERT INTO alert_prefs (discord_user_id, kind) VALUES (2, 'hint_found')")
+    with pytest.raises(sqlite3.IntegrityError):
+        old.execute("INSERT INTO alert_prefs (discord_user_id, kind) VALUES (2, 'friend_request')")  # not known yet
+    old.close()
+
+    database = Database(path, now=clock)
+    assert database.migrate() == [4]
+    rows = database.query_all("SELECT discord_user_id, kind FROM alert_prefs ORDER BY discord_user_id, kind")
+    assert [(r["discord_user_id"], r["kind"]) for r in rows] == [
+        *((1, kind) for kind in sorted(OLD_KINDS)), (2, "hint_found"),
+    ]
+    for kind in ("friend_request", "friend_game"):
+        database.execute("INSERT INTO alert_prefs (discord_user_id, kind) VALUES (2, ?)", (kind,))
+    with pytest.raises(sqlite3.IntegrityError):
+        database.execute("INSERT INTO alert_prefs (discord_user_id, kind) VALUES (2, 'something_else')")
+    database.close()
+
+
+def test_the_rebuilt_alert_table_still_belongs_to_the_link_and_has_no_leftovers(tmp_path, clock):
+    database = Database(tmp_path / "bot.sqlite3", now=clock)
+    database.migrate()
+    link(LinkStore(database, now=clock), 1, 10)
+    database.execute("INSERT INTO alert_prefs (discord_user_id, kind) VALUES (1, 'friend_request')")
+    with pytest.raises(sqlite3.IntegrityError):  # an alert for someone who is not linked
+        database.execute("INSERT INTO alert_prefs (discord_user_id, kind) VALUES (99, 'friend_request')")
+    assert LinkStore(database, now=clock).delete(1) is True  # the alert choices go with the link
+    assert database.query_all("SELECT * FROM alert_prefs") == []
+    names = {r["name"] for r in database.query_all("SELECT name FROM sqlite_master WHERE name LIKE 'alert_prefs%'")}
+    assert names <= {"alert_prefs", "sqlite_autoindex_alert_prefs_1"}
+    database.close()

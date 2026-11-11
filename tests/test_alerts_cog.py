@@ -29,16 +29,16 @@ async def test_someone_who_is_not_linked_is_told_to_link(bot):
         await ask(bot)
 
 
-async def test_the_list_has_the_five_alerts_all_off_to_begin_with_and_is_private(bot):
+async def test_the_list_has_the_six_alerts_all_off_to_begin_with_and_is_private(bot):
     link(bot)
     interaction = await ask(bot)
     [message] = interaction.messages
     assert message["ephemeral"] is True
     view = message["view"]
     assert isinstance(view, MultiSelectView)
-    assert [o.value for o in view.select.options] == list(ALERT_KINDS) and len(ALERT_KINDS) == 5
+    assert [o.value for o in view.select.options] == list(ALERT_KINDS) and len(ALERT_KINDS) == 6
     assert not any(o.default for o in view.select.options)
-    assert (view.select.min_values, view.select.max_values) == (0, 5)
+    assert (view.select.min_values, view.select.max_values) == (0, 6)
     assert [o.label for o in view.select.options][0] == "An item arrives for one of my slots"
 
 

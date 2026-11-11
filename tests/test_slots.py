@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 from fakes import BOT_TOKEN, USER_TOKEN, FakeInteraction, game_json, slot_json
 
+from apbot.cogs.common import resolve_username
 from apbot.cogs.slots import SlotsCog
 from apbot.errors import NotLinkedError, UserFacingError
 from apbot.manager.errors import Conflict
@@ -300,3 +301,23 @@ def test_entries_expire_and_the_oldest_goes_when_it_is_full():
     cache.discard("c")
     cache.discard("missing")
     assert cache.get("c") is None
+
+
+# --- resolve_username --------------------------------------------------------------------------------------------------
+def test_resolve_username_gives_the_linked_account_of_a_member_the_typed_name_or_nothing(bot):
+    link(bot, user_id=2002, manager_id=20, username="bob_manager", token="apm_bobsTokenForTests")
+    assert resolve_username(bot, SimpleNamespace(id=2002), None) == "bob_manager"
+    assert resolve_username(bot, SimpleNamespace(id=2002), "   ") == "bob_manager"
+    assert resolve_username(bot, None, " carol ") == "carol"
+    assert resolve_username(bot, None, None) is None
+    assert resolve_username(bot, None, "  ") is None
+
+
+def test_resolve_username_refuses_both_and_an_unlinked_member(bot):
+    link(bot, user_id=2002, manager_id=20, username="bob_manager", token="apm_bobsTokenForTests")
+    with pytest.raises(UserFacingError) as both:
+        resolve_username(bot, SimpleNamespace(id=2002), "carol")
+    assert both.value.message("en") == "Choose either a member or a username, not both"
+    with pytest.raises(UserFacingError) as unlinked:
+        resolve_username(bot, SimpleNamespace(id=3003), None)
+    assert unlinked.value.message("en") == "<@3003> has not linked a manager account"

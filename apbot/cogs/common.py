@@ -76,4 +76,18 @@ def slot_label(raw: object, slot: int) -> str:
     return safe_text(name, NAME_LIMIT) if name else f"#{slot}"
 
 
+def resolve_username(bot: "ApBot", member: discord.User | discord.Member | None, username: str | None) -> str | None:
+    """The manager username a command names: that of the member's linked account, the one typed, or None when neither
+    was given. Raises UserFacingError for both, or for a member who has not linked an account."""
+    username = (username or "").strip() or None  # a blank username is no username
+    if member is not None and username is not None:
+        raise UserFacingError("Choose either a member or a username, not both")
+    if member is not None:
+        link = bot.links.get(member.id)
+        if link is None:
+            raise UserFacingError("{member} has not linked a manager account", member=f"<@{member.id}>")
+        return link.manager_username
+    return username
+
+
 SlotText = app_commands.Range[str, 1, SLOT_OPTION_LENGTH]

@@ -261,3 +261,51 @@ async def test_the_new_calls_take_numbers_in_their_paths_only(manager: FakeManag
         with pytest.raises(ValueError):
             await call()
     assert manager.requests == []
+
+
+# --- friends -----------------------------------------------------------------------------------------------------------
+async def test_the_friend_list_is_a_read_that_is_retried_and_a_quick_look_gives_up_after_two_seconds(manager: FakeManager):
+    manager.add("GET", "/api/friends", (503, {"detail": "busy"}), {"friends": []})
+    assert await manager.client.friends(BOT_TOKEN) == {"friends": []}
+    assert len(manager.requests) == 2
+    manager.requests.clear()
+    manager.add("GET", "/api/friends", (503, {"detail": "busy"}))
+    with pytest.raises(ManagerUnavailable):
+        await manager.client.friends(BOT_TOKEN, quick=True)
+    [request] = manager.requests
+    assert request.extensions["timeout"]["read"] == 2
+    assert request.headers["Authorization"] == f"Bearer {BOT_TOKEN}" and BOT_TOKEN not in str(request.url)
+
+
+async def test_a_manager_without_friends_answers_404_which_is_not_found(manager: FakeManager):
+    with pytest.raises(NotFound):
+        await manager.client.friends(BOT_TOKEN)  # the fake manager answers an unknown route with 404, like FastAPI
+
+
+async def test_a_friend_is_asked_by_username_and_never_retried(manager: FakeManager):
+    manager.add("POST", "/api/friends", (503, {"detail": "busy"}), {"status": "asked"})
+    with pytest.raises(ManagerUnavailable):
+        await manager.client.ask_friend(BOT_TOKEN, "bob")
+    [request] = manager.requests
+    assert (request.method, request.url.path) == ("POST", "/api/friends")
+    assert json.loads(request.content) == {"username": "bob"}
+
+
+async def test_accepting_posts_without_a_body_and_removing_is_a_delete_that_is_not_retried(manager: FakeManager):
+    manager.add("POST", "/api/friends/20/accept", {"ok": True})
+    manager.add("DELETE", "/api/friends/21", (503, {"detail": "busy"}), {"removed": "friend"})
+    await manager.client.accept_friend(BOT_TOKEN, 20)
+    with pytest.raises(ManagerUnavailable):
+        await manager.client.remove_friend(BOT_TOKEN, "21")
+    accept, remove = manager.requests
+    assert (accept.method, accept.url.path, accept.content) == ("POST", "/api/friends/20/accept", b"")
+    assert (remove.method, remove.url.path, remove.content) == ("DELETE", "/api/friends/21", b"")
+    assert len(manager.requests) == 2
+
+
+@pytest.mark.parametrize("bad", ["7/../../tokens", "x"])
+async def test_the_friend_calls_take_numbers_in_their_paths_only(manager: FakeManager, bad):
+    for call in (lambda: manager.client.accept_friend(BOT_TOKEN, bad), lambda: manager.client.remove_friend(BOT_TOKEN, bad)):
+        with pytest.raises(ValueError):
+            await call()
+    assert manager.requests == []

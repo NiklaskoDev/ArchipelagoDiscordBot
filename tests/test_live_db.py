@@ -6,6 +6,7 @@ import pytest
 from apbot.db.database import Database
 from apbot.db.links import LinkStore
 from apbot.db.live import (
+    ALERT_KINDS,
     DEFAULT_FEED_KINDS,
     AlertPrefStore,
     FeedCursorStore,
@@ -14,6 +15,7 @@ from apbot.db.live import (
     ScheduledEventStore,
 )
 from apbot.manager.views import FEED_KINDS
+from apbot.ui.embeds import ALERT_KIND_LABELS
 
 
 @pytest.fixture
@@ -184,3 +186,11 @@ async def test_leaving_a_server_deletes_its_live_data_only(bot):
     for table in ("guild_settings", "game_spaces", "overview_messages", "scheduled_events", "signup_reminders"):
         assert bot.db.query_all(f"SELECT * FROM {table} WHERE guild_id = 5000") == [], table
         assert len(bot.db.query_all(f"SELECT * FROM {table} WHERE guild_id = 6000")) == 1, table
+
+
+def test_the_friend_request_alert_can_be_stored_and_every_offered_kind_has_a_label(db):
+    link(db)
+    prefs = AlertPrefStore(db)
+    prefs.replace(1, ["friend_request", "slot_offered"])
+    assert prefs.enabled(1) == {"friend_request", "slot_offered"}
+    assert "friend_request" in ALERT_KINDS and set(ALERT_KINDS) <= set(ALERT_KIND_LABELS)

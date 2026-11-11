@@ -254,6 +254,23 @@ class ManagerClient:
         """Cancels a queued or running job; the manager answers 409 when it is over already."""
         return await self._post(f"/api/jobs/{int(job_id)}/cancel", token)
 
+    # --- friends ----------------------------------------------------------------------------------------------------
+    async def friends(self, token: str, *, quick: bool = False) -> dict:
+        """The person's friends, the requests for them and the ones they made. An older manager answers 404."""
+        return await self._get("/api/friends", token, timeout=QUICK_TIMEOUT if quick else None, retry=not quick)
+
+    async def ask_friend(self, token: str, username: str) -> dict:
+        """Asks the user called `username` to be friends; `{status: asked | accepted, user}` (accepted when they had
+        asked already)."""
+        return await self._post("/api/friends", token, body={"username": username})
+
+    async def accept_friend(self, token: str, other_id: int) -> dict:
+        return await self._post(f"/api/friends/{int(other_id)}/accept", token)
+
+    async def remove_friend(self, token: str, other_id: int) -> dict:
+        """Ends a friendship, turns a request down or takes one back: `{removed: friend | declined | withdrawn}`."""
+        return await self._send("DELETE", f"/api/friends/{int(other_id)}", token)
+
     # --- sign-ups and configs ---------------------------------------------------------------------------------------
     async def signup(self, token: str, signup_id: int, *, quick: bool = False) -> dict:
         """One round with its entries (the asker's own, and all of them for the round's organizer) and, for the

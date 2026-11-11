@@ -12,6 +12,8 @@ from fakes import (
     activity_json,
     by_token,
     entry,
+    friend_json,
+    friends_json,
     game_json,
     hint_json,
     tracker_json,
@@ -22,7 +24,7 @@ from apbot.cogs.games import GamesCog
 from apbot.cogs.linking import LinkingCog
 from apbot.manager.views import FeedEntry
 from apbot.services.feeds import FeedGame
-from apbot.ui.dynamic import HandoverAcceptButton, HandoverDeclineButton
+from apbot.ui.dynamic import FriendAnswerButton, HandoverAcceptButton, HandoverDeclineButton
 
 GUILD, CHANNEL = 5000, 100
 MINE = [{"slot": 1, "name": "Alice", "game": "Timespinner", "idle_since": None}]
@@ -168,6 +170,8 @@ async def test_setup_starts_the_live_tasks_registers_the_buttons_and_adds_the_al
         assert {"game-cache", "heartbeat", "user-sync", "feeds", "relay", "overview", "events", "signup-reminders"} <= names
         registered = set(bot._connection._view_store._dynamic_items)
         assert {HandoverAcceptButton.__discord_ui_compiled_template__, HandoverDeclineButton.__discord_ui_compiled_template__} <= registered
+        assert FriendAnswerButton.__discord_ui_compiled_template__ in registered
+        assert {"friends", "friend"} <= {command.name for command in bot.tree.get_commands()}
         assert "alerts" in {command.name for command in bot.tree.get_commands()}
     finally:
         await bot.close()
@@ -264,6 +268,27 @@ async def test_a_slot_offered_to_the_player_reaches_them_with_buttons(live, bot,
     await bot.user_sync.sync_user(bot.links.get(1001))
     [dm] = live.dms
     assert [c.custom_id for c in dm.kwargs["view"].children] == ["apbot:ho:accept:7:2", "apbot:ho:decline:7:2"]
+
+
+async def test_a_friend_request_reaches_the_person_who_asked_for_it_with_buttons_through_the_bots_own_wiring(live, bot, manager):
+    bot.alert_prefs.replace(1001, ["friend_request"])
+    live.games()
+    manager.add("GET", "/api/friends", friends_json())
+    await bot.user_sync.sync_user(bot.links.get(1001))
+    assert live.dms == []  # the first look only remembers
+    manager.add("GET", "/api/friends", friends_json(incoming=[friend_json(21, "cy", asked_at=100.0)]))
+    await bot.user_sync.sync_user(bot.links.get(1001))
+    [dm] = live.dms
+    assert dm.kwargs["embed"].description == "**cy** wants to be your friend on the manager"
+    assert [c.custom_id for c in dm.kwargs["view"].children] == ["apbot:fr:accept:21", "apbot:fr:decline:21"]
+    assert [r.headers["Authorization"] for r in manager.requests if r.url.path == "/api/friends"] == [f"Bearer {USER_TOKEN}"] * 2
+
+
+async def test_friends_are_not_asked_for_someone_who_did_not_turn_the_alert_on_through_the_bots_own_wiring(live, bot, manager):
+    live.games()
+    manager.add("GET", "/api/friends", friends_json(incoming=[friend_json(21, "cy", asked_at=100.0)]))
+    await bot.user_sync.sync_user(bot.links.get(1001))
+    assert "/api/friends" not in manager.paths() and live.dms == []
 
 
 async def test_the_players_of_a_game_get_its_role_through_the_bots_own_wiring(live, bot):

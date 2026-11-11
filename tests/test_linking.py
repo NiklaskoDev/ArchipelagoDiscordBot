@@ -1,6 +1,6 @@
 import discord
 import pytest
-from fakes import USER_TOKEN, FakeInteraction, game_json, json_text
+from fakes import USER_TOKEN, FakeInteraction, friends_json, game_json, json_text
 
 from apbot.cogs.linking import LinkingCog, LinkModal
 from apbot.errors import UserFacingError
@@ -265,3 +265,26 @@ async def test_unlinking_forgets_the_kept_game_list(bot, manager):
     await interaction.messages[0]["view"].children[0].callback(FakeInteraction(bot, user_id=1001))
     await task
     assert bot.my_games.cached(1001) is None
+
+
+# --- the person's friend list is forgotten when the link changes -------------------------------------------------------
+async def test_linking_again_forgets_the_kept_friend_list(bot, manager):
+    accept(manager)
+    await submit(bot)
+    manager.add("GET", "/api/friends", friends_json())
+    await bot.friend_directory.overview(1001, USER_TOKEN)
+    await submit(bot)  # another account may have other friends
+    await bot.friend_directory.overview(1001, USER_TOKEN)
+    assert manager.paths().count("/api/friends") == 2
+
+
+async def test_unlinking_forgets_the_kept_friend_list(bot, manager):
+    accept(manager)
+    await submit(bot)
+    manager.add("GET", "/api/friends", friends_json())
+    await bot.friend_directory.overview(1001, USER_TOKEN)
+    interaction, task = await start_unlink(bot)
+    await interaction.messages[0]["view"].children[0].callback(FakeInteraction(bot, user_id=1001))
+    await task
+    await bot.friend_directory.overview(1001, USER_TOKEN)
+    assert manager.paths().count("/api/friends") == 2

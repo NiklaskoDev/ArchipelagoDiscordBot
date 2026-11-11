@@ -23,7 +23,7 @@ from apbot.services.alerts import (
     rules_for,
 )
 from apbot.services.feeds import FeedGame
-from apbot.services.user_sync import GAME_ONLINE, SLOT_OFFERED, UserGameEvent, UserSync
+from apbot.services.user_sync import GAME_ONLINE, SLOT_OFFERED, FriendRequestEvent, UserGameEvent, UserSync
 
 GAME = FeedGame(7, "Friday Run", "running", True)
 ALL = frozenset({"item_received", "hint_found", "stuck_in_my_world", "game_online", "slot_offered"})
@@ -514,3 +514,61 @@ async def test_a_hint_that_was_found_long_before_does_not_alert_in_the_seeding_b
     live.tracker(hint_json("Sword", "Alice", "Bob", "Chest", found=True))
     await live.engine.handle(GAME, (feed_entry("chat", player="B", text="hi"), item(name="Bow", location="Cave", seq=2)))
     assert live.dms == []
+
+
+# --- friend requests ---------------------------------------------------------------------------------------------------
+async def test_a_friend_request_comes_with_buttons_to_accept_or_decline_it(make_engine):
+    live = make_engine("friend_request")
+    await live.engine.handle_friend_requests([FriendRequestEvent(1001, 21, "cy")])
+    [message] = live.dms
+    embed, view = message.kwargs["embed"], message.kwargs["view"]
+    assert (embed.title, embed.description) == ("Friend request", "**cy** wants to be your friend on the manager")
+    assert [child.custom_id for child in view.children] == ["apbot:fr:accept:21", "apbot:fr:decline:21"]
+    assert [child.item.label for child in view.children] == ["Accept", "Decline"]
+    assert view.timeout is None and message.kwargs["allowed_mentions"].everyone is False
+
+
+async def test_the_askers_name_cannot_format_or_ping(make_engine):
+    live = make_engine("friend_request")
+    await live.engine.handle_friend_requests([FriendRequestEvent(1001, 21, "@everyone **x**")])
+    description = live.dms[0].kwargs["embed"].description
+    assert "@everyone" not in description and "\\*\\*x\\*\\*" in description
+
+
+async def test_every_request_gets_its_own_message(make_engine):
+    live = make_engine("friend_request")
+    await live.engine.handle_friend_requests([FriendRequestEvent(1001, 21, "cy"), FriendRequestEvent(1001, 22, "dee")])
+    assert [m.kwargs["view"].children[0].custom_id for m in live.dms] == ["apbot:fr:accept:21", "apbot:fr:accept:22"]
+
+
+async def test_the_request_message_is_in_the_language_stored_for_the_person(make_engine):
+    live = make_engine("friend_request", locale="de")
+    await live.engine.handle_friend_requests([FriendRequestEvent(1001, 21, "cy")])
+    embed = live.dms[0].kwargs["embed"]
+    assert (embed.title, embed.description) == ("Freundschaftsanfrage", "**cy** möchte im Manager mit dir befreundet sein")
+    assert [c.item.label for c in live.dms[0].kwargs["view"].children] == ["Annehmen", "Ablehnen"]
+
+
+async def test_nothing_is_sent_when_the_alert_is_off(make_engine):
+    live = make_engine("game_online")
+    await live.engine.handle_friend_requests([FriendRequestEvent(1001, 21, "cy")])
+    assert live.dms == []
+
+
+async def test_a_person_who_unlinked_gets_no_friend_request_message(bot, make_engine):
+    live = make_engine("friend_request")
+    bot.links.delete(1001)
+    await live.engine.handle_friend_requests([FriendRequestEvent(1001, 21, "cy")])
+    assert live.dms == []
+
+
+async def test_a_person_who_closed_their_dms_is_left_alone_for_a_day(make_engine):
+    live = make_engine("friend_request")
+    (await live.directory(1001)).fail_with = forbidden()
+    await live.engine.handle_friend_requests([FriendRequestEvent(1001, 21, "cy"), FriendRequestEvent(1001, 22, "dee")])
+    (await live.directory(1001)).fail_with = None
+    await live.engine.handle_friend_requests([FriendRequestEvent(1001, 23, "eve")])
+    assert live.dms == []  # muted: not even tried again
+    live.clock.now += MUTE_SECONDS + 1
+    await live.engine.handle_friend_requests([FriendRequestEvent(1001, 23, "eve")])
+    assert len(live.dms) == 1

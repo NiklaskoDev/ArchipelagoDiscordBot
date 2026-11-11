@@ -8,6 +8,7 @@ from fakes import make_bot
 from i18n_scan import scan
 
 from apbot.cogs.alerts import AlertsCog
+from apbot.cogs.friends import FriendsCog
 from apbot.cogs.games import GamesCog
 from apbot.cogs.generate import GenerateCog
 from apbot.cogs.linking import LinkingCog
@@ -119,6 +120,7 @@ async def command_payloads(tmp_path, manager) -> list[dict]:
     await bot.add_cog(TextClientCog(bot))
     await bot.add_cog(SlotsCog(bot))
     await bot.add_cog(GenerateCog(bot))
+    await bot.add_cog(FriendsCog(bot))
     translator = BotTranslator()
     payloads = [await command.get_translated_payload(bot.tree, translator) for command in bot.tree.get_commands()]
     await bot.close()
@@ -128,7 +130,7 @@ async def command_payloads(tmp_path, manager) -> list[dict]:
 COMMAND_NAMES = {
     "games", "game", "signups", "signup", "wake", "start", "stop", "restart", "link", "unlink", "mydata", "setup", "alerts",
     "tracker", "hints", "hint", "hint_location", "remaining", "say", "release", "collect", "status", "claim", "handover",
-    "generate", "game_archive", "game_delete",
+    "generate", "game_archive", "game_delete", "friends", "friend",
 }
 LOCALES = {"de", "fr", "nl"}
 

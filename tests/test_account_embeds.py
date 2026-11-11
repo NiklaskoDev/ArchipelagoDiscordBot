@@ -129,3 +129,9 @@ def test_game_state_embed_shows_name_and_state_with_the_state_colour():
 def test_notice_embed_is_plain_text_in_the_given_colour():
     assert notice_embed("Hello").colour == discord.Colour(0x2F6F9F)
     assert notice_embed("Hello", discord.Colour(1)).colour == discord.Colour(1)
+
+
+def test_the_friend_request_alert_is_listed_with_its_label_in_mydata_when_on():
+    embed = link_status_embed(link(), "en", ["slot_offered", "friend_request"])
+    assert fields(embed)["Alerts"] == "A slot is offered to me\nSomeone asks to be my friend"
+    assert link_status_embed(link(), "de", ["friend_request"]).fields[-1].value == "Jemand möchte mit mir befreundet sein"

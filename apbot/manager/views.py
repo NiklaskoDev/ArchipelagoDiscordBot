@@ -210,6 +210,28 @@ class JobView:
 
 
 @dataclass(frozen=True)
+class FriendView:
+    """A person on the friend list or in a request. `at` is when they became friends or when the request was made."""
+
+    id: int
+    username: str
+    at: float | None
+    shared_configs: int = 0  # configs they share with the asker (friends only)
+    games_together: int = 0
+
+
+@dataclass(frozen=True)
+class FriendsOverview:
+    friends: tuple[FriendView, ...]
+    incoming: tuple[FriendView, ...]  # requests waiting for the asker's answer
+    outgoing: tuple[FriendView, ...]  # requests the asker made
+
+    @property
+    def is_empty(self) -> bool:
+        return not (self.friends or self.incoming or self.outgoing)
+
+
+@dataclass(frozen=True)
 class FeedEntry:
     seq: int
     at: float
@@ -498,6 +520,37 @@ def parse_job(raw: Any) -> JobView:
         queue_position=_optional_int(raw.get("queue_position")),
         host_after=bool(raw.get("host_after")),
         players=tuple(p for p in map(_job_player, players) if p is not None),
+    )
+
+
+def _friend(raw: Any, time_key: str) -> FriendView | None:
+    if not isinstance(raw, Mapping) or _int(raw.get("id"), -1) < 0 or not _text(raw.get("username")):
+        return None
+    return FriendView(
+        id=raw["id"],
+        username=raw["username"],
+        at=_number(raw.get(time_key)),
+        shared_configs=_int(raw.get("shared_configs")),
+        games_together=_int(raw.get("games_together")),
+    )
+
+
+def _friend_list(raw: Mapping, key: str, time_key: str) -> tuple[FriendView, ...]:
+    entries = raw.get(key)
+    if not isinstance(entries, list):
+        raise ValueError(f"The manager's friend list has no list of {key}")
+    return tuple(friend for friend in (_friend(entry, time_key) for entry in entries) if friend is not None)
+
+
+def parse_friends(raw: Any) -> FriendsOverview:
+    """The friend list, the requests for the asker and the ones they made. Raises ValueError when the answer does not
+    have that shape. The manager's suggestions ("people you played with") are not read."""
+    if not isinstance(raw, Mapping):
+        raise ValueError("The manager sent a friend list that is not an object")
+    return FriendsOverview(
+        friends=_friend_list(raw, "friends", "since"),
+        incoming=_friend_list(raw, "incoming", "asked_at"),
+        outgoing=_friend_list(raw, "outgoing", "asked_at"),
     )
 
 

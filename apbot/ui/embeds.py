@@ -58,6 +58,7 @@ ALERT_KIND_LABELS = {
     "stuck_in_my_world": translatable("A player is stuck and waits for items in my world"),
     "game_online": translatable("One of my games comes online"),
     "slot_offered": translatable("A slot is offered to me"),
+    "friend_request": translatable("Someone asks to be my friend"),
 }
 
 

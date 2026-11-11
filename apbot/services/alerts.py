@@ -20,8 +20,8 @@ from apbot.manager.client import ManagerClient
 from apbot.manager.errors import ManagerError, TokenInvalid
 from apbot.manager.views import FeedEntry, HintView, SlotRef, parse_hints
 from apbot.services.feeds import FeedGame
-from apbot.services.user_sync import GAME_ONLINE, SLOT_OFFERED, UserGameEvent, UserSync
-from apbot.ui.dynamic import handover_view
+from apbot.services.user_sync import FRIEND_REQUEST, GAME_ONLINE, SLOT_OFFERED, FriendRequestEvent, UserGameEvent, UserSync
+from apbot.ui.dynamic import friend_request_view, handover_view
 from apbot.ui.embeds import notice_embed
 from apbot.ui.format import fit_lines, safe_text
 from apbot.ui.feed import TEXT_LIMIT
@@ -272,6 +272,17 @@ class AlertEngine:
             enabled = self._prefs.enabled(discord_id)
             alerts = [a for event in events if event.discord_user_id == discord_id if (a := alert_for_event(event, enabled))]
             await self._deliver(link, alerts)
+
+    async def handle_friend_requests(self, events: list[FriendRequestEvent]) -> None:
+        """One message per new friend request, with buttons to answer it, for people who turned the alert on."""
+        for event in events:
+            link = self._links.get(event.discord_user_id)
+            if link is None or FRIEND_REQUEST not in self._prefs.enabled(event.discord_user_id):
+                continue
+            lang = link.locale
+            text = t("**{user}** wants to be your friend on the manager", lang, user=_name(event.from_name))
+            embed = discord.Embed(title=t("Friend request", lang), description=text, colour=ACCENT)
+            await self._send(link.discord_user_id, embed=embed, view=friend_request_view(event.from_id, lang))
 
     async def token_stopped(self, link: UserLink) -> None:
         """Tells a person, once, that the manager stopped accepting their token (they never have to have asked)."""

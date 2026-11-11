@@ -10,6 +10,7 @@ from discord.ext import commands
 
 from apbot.access import Access
 from apbot.cogs.alerts import AlertsCog
+from apbot.cogs.friends import FriendsCog
 from apbot.cogs.games import GamesCog
 from apbot.cogs.generate import GenerateCog
 from apbot.cogs.linking import LinkingCog
@@ -38,6 +39,7 @@ from apbot.manager.client import ManagerClient
 from apbot.services.alerts import AlertEngine
 from apbot.services.events import EVENTS_INTERVAL, Events
 from apbot.services.feeds import TICK, FeedPoller
+from apbot.services.friends import FriendDirectory
 from apbot.services.game_cache import REFRESH_INTERVAL, GameCache
 from apbot.services.manager_watch import RETRY_INTERVAL, ManagerWatch, StartupFailure
 from apbot.services.overview import OVERVIEW_INTERVAL, Overview
@@ -48,8 +50,8 @@ from apbot.services.signup_directory import SignupDirectory
 from apbot.services.signup_reminders import REMINDER_INTERVAL, SignupReminders
 from apbot.services.slots import SlotDirectory
 from apbot.services.text_client import TextClientBridge
-from apbot.services.user_sync import SYNC_INTERVAL, UserSync
-from apbot.ui.dynamic import HandoverAcceptButton, HandoverDeclineButton, HintStatusButton
+from apbot.services.user_sync import FRIEND_REQUEST, SYNC_INTERVAL, UserSync
+from apbot.ui.dynamic import FriendAnswerButton, HandoverAcceptButton, HandoverDeclineButton, HintStatusButton
 from apbot.ui.embeds import error_embed
 
 log = logging.getLogger(__name__)
@@ -81,6 +83,7 @@ class ApBot(commands.Bot):
         self.slots = SlotDirectory(self.manager)
         self.signup_directory = SignupDirectory(self.manager)
         self.my_games = MyGames(self.manager)
+        self.friend_directory = FriendDirectory(self.manager)
         self.text_client = TextClientBridge(self.manager)
         self.relay = Relay(
             self, self.spaces, self.guild_settings, self.cache, self.manager, config.manager_api_token,
@@ -107,6 +110,8 @@ class ApBot(commands.Bot):
             on_events=self.alerts.handle_events,
             on_memberships=self.relay.sync_roles,
             on_token_stopped=self.alerts.token_stopped,
+            on_friend_requests=self.alerts.handle_friend_requests,
+            wants_friend_requests=lambda discord_id: FRIEND_REQUEST in self.alert_prefs.enabled(discord_id),
         )
         self.feeds.add_sink(self.relay.publish, public_only=True)  # a private game's feed reaches its players only
         self.feeds.add_sink(self.alerts.handle)
@@ -139,7 +144,8 @@ class ApBot(commands.Bot):
         await self.add_cog(TextClientCog(self))
         await self.add_cog(SlotsCog(self))
         await self.add_cog(GenerateCog(self))
-        self.add_dynamic_items(HandoverAcceptButton, HandoverDeclineButton, HintStatusButton)
+        await self.add_cog(FriendsCog(self))
+        self.add_dynamic_items(HandoverAcceptButton, HandoverDeclineButton, HintStatusButton, FriendAnswerButton)
         await self._sync_commands()
         for task in self._periodic:
             task.start()

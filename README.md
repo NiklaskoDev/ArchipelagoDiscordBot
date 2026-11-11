@@ -63,7 +63,8 @@ The bot reads each game's activity feed from the manager every few seconds while
   everyone get a thread; a private game never appears in a server.
 - **Direct messages (`/alerts`).** Linked people can ask for a message when an item arrives for one of their slots, when
   an item they were hinted is found, when a player is stuck and waits for items in their world, when one of their games
-  comes online, and when a slot is offered to them (with buttons to take it over or decline). This works for private
+  comes online, when a slot is offered to them (with buttons to take it over or decline), and when someone asks to be
+  their friend (with buttons to accept or decline). This works for private
   games too, because the bot reads those with the player's own token. Someone who has closed their DMs is left alone
   for a day. If the manager stops accepting a person's token, they get one message about it.
 - **Overview.** With an overview channel set, one pinned message lists the games and open sign-up rounds and is edited
@@ -112,6 +113,22 @@ The manager limits what a plain player can generate (by default 15 worlds, 3 unf
 and may allow generating to administrators only. The bot follows a generation for up to 14 minutes (Discord stops
 accepting edits of a reply after 15); after that the reply links to the job in the manager and the game shows up in
 `/games` when it is ready.
+
+### Friends
+
+Friends are a feature of the Archipelago Manager. These commands act as you, with your linked token, and the replies
+are private. On a manager that is too old to have friends they say so ("This manager has no friends feature yet") and
+change nothing. Adding a friend needs a token with access *Read and change*.
+
+| Command | Who | What |
+|---|---|---|
+| `/friends` | linked users | Your friends, the requests for you and the requests you made, by manager username. Pick a person from the list to answer a request (*Accept*, *Decline*), take your request back, or remove a friend; the button you press is the confirmation. Removing a friend also ends the sharing of configs that you only shared with each other by name. |
+| `/friend add member: username:` | linked users | Asks someone to be your friend: either a Discord member who linked their manager account, or a manager username. If they had asked you already, you are friends now. |
+
+The alert "Someone asks to be my friend" (`/alerts`) sends you a direct message for each new friend request, with
+*Accept* and *Decline* buttons. The manager has no push for this, so the bot looks at the friend requests of the people
+who turned this alert on every two minutes (one more request per such person); requests that arrive while the bot is
+down are not announced.
 
 ### Sign-ups
 
@@ -239,7 +256,9 @@ What the bot stores, in `DATA_DIR/bot.sqlite3`:
 - For each open sign-up round: which deadline reminders were already posted (server, round, deadline, lead time).
 
 Not stored: the games a linked person's account can see are kept in memory for up to a minute (for `/games` and the
-game suggestions) and are gone after a restart.
+game suggestions) and are gone after a restart. The same goes for a person's friend list (kept for a minute for
+`/friends`) and, for people who turned on the friend request alert, which requests were already seen (so only new
+ones are announced). Only manager usernames of friends are shown, never anyone's Discord identity.
 
 `/mydata` shows a person everything stored about them. `/unlink` deletes it, takes the person out of the game roles
 and forgets their alerts. When the bot leaves a server, that server's data is deleted. The bot cannot revoke a token in the manager: after `/unlink`, do that under *API tokens*.

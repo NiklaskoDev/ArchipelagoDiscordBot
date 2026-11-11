@@ -191,9 +191,12 @@ class GenerateCog(commands.Cog):
                 )
             except ManagerUnavailable:
                 continue  # the manager may be busy; the next look will do
+            except (NotFound, Forbidden):
+                await self._show_lost(interaction, lang)
+                return
             job = parse_job(raw)
             if job.status not in JOB_FINISHED:
-                if not await self._show(interaction, embed=job_embed(job, lang, me=me), view=view):
+                if not await self._show_progress(interaction, job, view, lang, me):
                     return
                 continue
             await self._show(interaction, embed=job_embed(job, lang, me=me), view=self._game_link(job, lang))
@@ -206,6 +209,30 @@ class GenerateCog(commands.Cog):
             interaction,
             embed=notice_embed(text, WARNING),
             view=open_in_manager_view(self.bot.cache.site_url, f"/jobs/{job_id}", lang),
+        )
+
+    async def _show_progress(
+        self, interaction: discord.Interaction, job: JobView, view: GenerationView, lang: str, me: int
+    ) -> bool:
+        """Edits the reply with how far the job is. False when the reply cannot be edited any more.
+
+        Cancel is handled while this edit is on its way, and Discord may apply the two edits in either order: when it
+        was pressed meanwhile, the edit is made again so the greyed-out button is what stays."""
+        while True:
+            cancelled = view.cancel_requested
+            view.cancel.disabled = cancelled
+            if not await self._show(interaction, embed=job_embed(job, lang, me=me), view=view):
+                return False
+            if view.cancel_requested == cancelled:
+                return True
+
+    async def _show_lost(self, interaction: discord.Interaction, lang: str) -> None:
+        """The manager does not show the job any more (it was removed, or the account lost access to it)."""
+        text = t("The manager no longer shows this generation. Look at /games, or open the manager.", lang)
+        await self._show(
+            interaction,
+            embed=notice_embed(text, WARNING),
+            view=open_in_manager_view(self.bot.cache.site_url, "/games", lang),
         )
 
     def _game_link(self, job: JobView, lang: str) -> discord.ui.View | None:

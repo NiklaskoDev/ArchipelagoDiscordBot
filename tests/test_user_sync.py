@@ -1,7 +1,14 @@
 import pytest
-from fakes import USER_TOKEN, game_json
+from fakes import USER_TOKEN, friend_json, friends_json, game_json
 
-from apbot.services.user_sync import GAME_ONLINE, SLOT_OFFERED, UserSync, events_between
+from apbot.services.user_sync import (
+    FRIENDS_RETRY,
+    GAME_ONLINE,
+    SLOT_OFFERED,
+    FriendRequestEvent,
+    UserSync,
+    events_between,
+)
 from apbot.manager.views import parse_user_games
 
 
@@ -291,3 +298,208 @@ async def test_the_games_of_a_person_are_those_they_play_in_ongoing_ones_first(b
     await sync.sync_user(link(bot))
     assert [g.name for g in sync.games_of(1001)] == ["Newer", "Mine", "Old"]
     assert sync.games_of(9999) == []
+
+
+# --- friend requests ---------------------------------------------------------------------------------------------------
+FRIENDS = "/api/friends"
+
+
+class Asked:
+    """What UserSync told its friend-request listener, and who has the alert on."""
+
+    def __init__(self, *wanting: int):
+        self.wanting = set(wanting)
+        self.events: list[list[FriendRequestEvent]] = []
+
+    def wants(self, discord_id: int) -> bool:
+        return discord_id in self.wanting
+
+    async def on_friend_requests(self, events):
+        self.events.append(events)
+
+
+class Clock:
+    def __init__(self):
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def friend_sync(bot, manager):
+    async def no_wait(seconds):
+        pass
+
+    clock = Clock()
+    sync = UserSync(bot.links, bot.access, manager.client, sleep=no_wait, now=clock)
+    sync.heard, sync.asked, sync.clock = Heard(), Asked(1001), clock
+    sync.listen(
+        on_events=sync.heard.on_events, on_memberships=sync.heard.on_memberships,
+        on_token_stopped=sync.heard.on_token_stopped, on_friend_requests=sync.asked.on_friend_requests,
+        wants_friend_requests=sync.asked.wants,
+    )
+    manager.add("GET", "/api/games", [])
+    return sync
+
+
+def asking(*people) -> dict:
+    return friends_json(incoming=[friend_json(user_id, name, asked_at=100.0) for user_id, name in people])
+
+
+def friend_calls(manager) -> list:
+    return [r for r in manager.requests if r.url.path == FRIENDS]
+
+
+async def test_friends_are_not_looked_at_for_someone_who_did_not_turn_the_alert_on(bot, manager, friend_sync):
+    friend_sync.asked.wanting.clear()
+    await friend_sync.sync_user(link(bot))
+    assert friend_calls(manager) == [] and friend_sync.asked.events == []
+
+
+async def test_without_a_listener_nothing_is_asked_either(bot, manager):
+    async def no_wait(seconds):
+        pass
+
+    sync = UserSync(bot.links, bot.access, manager.client, sleep=no_wait)  # nobody called listen with the friend parts
+    manager.add("GET", "/api/games", [])
+    await sync.sync_user(link(bot))
+    assert friend_calls(manager) == []
+
+
+async def test_the_first_look_only_remembers_and_a_new_request_is_one_event(bot, manager, friend_sync):
+    the_link = link(bot)
+    manager.add("GET", FRIENDS, asking((21, "cy")))
+    await friend_sync.sync_user(the_link)
+    assert friend_sync.asked.events == []  # a restart must not bring old requests back as news
+    manager.add("GET", FRIENDS, asking((21, "cy"), (22, "dee")))
+    await friend_sync.sync_user(the_link)
+    [[event]] = friend_sync.asked.events
+    assert event == FriendRequestEvent(1001, 22, "dee")
+    assert friend_calls(manager)[0].headers["Authorization"] == f"Bearer {USER_TOKEN}"
+
+
+async def test_the_same_request_next_time_is_no_event(bot, manager, friend_sync):
+    the_link = link(bot)
+    manager.add("GET", FRIENDS, asking())
+    await friend_sync.sync_user(the_link)
+    manager.add("GET", FRIENDS, asking((21, "cy")))
+    await friend_sync.sync_user(the_link)
+    await friend_sync.sync_user(the_link)
+    assert len(friend_sync.asked.events) == 1
+
+
+async def test_someone_who_asks_again_after_being_declined_is_new_again(bot, manager, friend_sync):
+    the_link = link(bot)
+    manager.add("GET", FRIENDS, asking())
+    await friend_sync.sync_user(the_link)
+    for state in (asking((21, "cy")), asking(), asking((21, "cy"))):
+        manager.add("GET", FRIENDS, state)
+        await friend_sync.sync_user(the_link)
+    assert [[e.from_id for e in events] for events in friend_sync.asked.events] == [[21], [21]]
+
+
+async def test_several_new_requests_arrive_together_in_one_call(bot, manager, friend_sync):
+    the_link = link(bot)
+    manager.add("GET", FRIENDS, asking())
+    await friend_sync.sync_user(the_link)
+    manager.add("GET", FRIENDS, asking((21, "cy"), (22, "dee")))
+    await friend_sync.sync_user(the_link)
+    [events] = friend_sync.asked.events
+    assert [(e.from_id, e.from_name) for e in events] == [(21, "cy"), (22, "dee")]
+
+
+async def test_outgoing_requests_and_friends_are_no_events(bot, manager, friend_sync):
+    the_link = link(bot)
+    manager.add("GET", FRIENDS, asking())
+    await friend_sync.sync_user(the_link)
+    manager.add(
+        "GET", FRIENDS,
+        friends_json(friends=[friend_json(20, "bob", since=1.0)], outgoing=[friend_json(22, "dee", asked_at=1.0)]),
+    )
+    await friend_sync.sync_user(the_link)
+    assert friend_sync.asked.events == []
+
+
+async def test_turning_the_alert_off_and_on_makes_the_first_look_quiet_again(bot, manager, friend_sync):
+    the_link = link(bot)
+    manager.add("GET", FRIENDS, asking())
+    await friend_sync.sync_user(the_link)
+    friend_sync.asked.wanting.clear()
+    manager.add("GET", FRIENDS, asking((21, "cy")))
+    await friend_sync.sync_user(the_link)  # off: not even asked
+    assert len(friend_calls(manager)) == 1
+    friend_sync.asked.wanting.add(1001)
+    await friend_sync.sync_user(the_link)  # on again: the request that came meanwhile is not news
+    assert friend_sync.asked.events == [] and len(friend_calls(manager)) == 2
+
+
+async def test_a_token_the_manager_refuses_at_friends_ends_the_link_like_at_games(bot, manager, friend_sync):
+    manager.add("GET", FRIENDS, (401, {"detail": "This API token is not valid (any more)"}))
+    await friend_sync.sync_user(link(bot))
+    assert bot.links.get(1001).status == "invalid"
+    assert friend_sync.heard.stopped == [1001]
+
+
+async def test_a_manager_without_friends_is_left_alone_for_an_hour_and_games_go_on(bot, manager, friend_sync):
+    the_link = link(bot)
+    games(manager, game_json(7, state="stopped", my_slots=MINE))
+    await friend_sync.sync_user(the_link)  # /api/friends: 404
+    assert len(friend_calls(manager)) == 1
+    friend_sync.clock.now += FRIENDS_RETRY - 1
+    games(manager, game_json(7, state="running", my_slots=MINE))
+    await friend_sync.sync_user(the_link)
+    assert len(friend_calls(manager)) == 1  # not asked again
+    assert [e.kind for [e] in friend_sync.heard.events] == [GAME_ONLINE]  # the games part is not affected
+    friend_sync.clock.now += 2
+    manager.add("GET", FRIENDS, asking())
+    await friend_sync.sync_user(the_link)
+    assert len(friend_calls(manager)) == 2 and FRIENDS_RETRY == 3600
+
+
+async def test_a_manager_that_fails_or_answers_oddly_changes_nothing_and_is_asked_again(bot, manager, friend_sync):
+    the_link = link(bot)
+    manager.add("GET", FRIENDS, asking((21, "cy")))
+    await friend_sync.sync_user(the_link)
+    for broken in ((503, {"detail": "down"}), {"friends": "no"}):
+        manager.add("GET", FRIENDS, broken)
+        await friend_sync.sync_user(the_link)
+    manager.add("GET", FRIENDS, asking((21, "cy"), (22, "dee")))
+    await friend_sync.sync_user(the_link)
+    assert [[e.from_id for e in events] for events in friend_sync.asked.events] == [[22]]  # what was known survived
+    assert bot.links.get(1001).status == "active"
+
+
+async def test_friends_are_not_looked_at_when_the_games_could_not_be_read(bot, manager, friend_sync):
+    manager.add("GET", "/api/games", (503, {"detail": "down"}))
+    await friend_sync.sync_user(link(bot))
+    assert friend_calls(manager) == []
+
+
+async def test_forgetting_a_person_forgets_their_requests(bot, manager, friend_sync):
+    the_link = link(bot)
+    manager.add("GET", FRIENDS, asking((21, "cy")))
+    await friend_sync.sync_user(the_link)
+    friend_sync.forget(1001)  # unlinked, or the token stopped working
+    await friend_sync.sync_user(the_link)
+    assert friend_sync.asked.events == []  # the first look after that is quiet again
+
+
+async def test_people_who_unlinked_are_dropped_with_their_requests(bot, manager, friend_sync):
+    the_link = link(bot)
+    manager.add("GET", FRIENDS, asking((21, "cy")))
+    await friend_sync.sync_user(the_link)
+    bot.links.delete(1001)
+    await friend_sync.run_once()
+    assert friend_sync._incoming == {}
+
+
+async def test_every_person_is_asked_with_their_own_token(bot, manager, friend_sync):
+    link(bot, 1001, 10, "apm_firstUserToken")
+    link(bot, 2002, 20, "apm_secondUserToken")
+    friend_sync.asked.wanting.add(2002)
+    manager.add("GET", FRIENDS, asking())
+    await friend_sync.run_once()
+    assert sorted(r.headers["Authorization"] for r in friend_calls(manager)) == [
+        "Bearer apm_firstUserToken", "Bearer apm_secondUserToken",
+    ]

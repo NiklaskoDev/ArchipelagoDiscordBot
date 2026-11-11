@@ -2,10 +2,12 @@ import dataclasses
 import json
 
 import pytest
-from fakes import SECRETS, game_json, job_json, signup_json, slot_json
+from fakes import SECRETS, friend_json, friends_json, game_json, job_json, signup_json, slot_json
 
 from apbot.manager.views import (
     JOB_FINISHED,
+    FriendsOverview,
+    FriendView,
     GameDetail,
     GameSummary,
     JobPlayer,
@@ -14,6 +16,7 @@ from apbot.manager.views import (
     SlotView,
     listed_games,
     open_signups,
+    parse_friends,
     parse_game_detail,
     parse_game_summary,
     parse_games,
@@ -189,3 +192,53 @@ def test_a_job_view_holds_no_log_options_or_meta():
         "id", "name", "status", "game_id", "error", "queue_position", "host_after", "players",
     }
     assert {f.name for f in dataclasses.fields(JobPlayer)} == {"user_id", "owner", "config_id", "filename"}
+
+
+# --- friends -----------------------------------------------------------------------------------------------------------
+def test_the_three_friend_lists_are_read_and_the_suggestions_are_ignored():
+    overview = parse_friends(
+        friends_json(
+            friends=[friend_json(20, "bob", since=1_700_000_100.0, shared_configs=2, games_together=1)],
+            incoming=[friend_json(21, "cy", asked_at=1_700_000_200.0)],
+            outgoing=[friend_json(22, "dee", asked_at=1_700_000_300.0)],
+            suggestions=[friend_json(23, "eve", games_together=4)],
+        )
+    )
+    assert overview.friends == (FriendView(20, "bob", 1_700_000_100.0, 2, 1),)
+    assert overview.incoming == (FriendView(21, "cy", 1_700_000_200.0),)
+    assert overview.outgoing == (FriendView(22, "dee", 1_700_000_300.0),)
+    assert not overview.is_empty
+    assert not any("eve" in repr(person) for person in (*overview.friends, *overview.incoming, *overview.outgoing))
+
+
+def test_an_empty_friend_list_is_empty():
+    assert parse_friends(friends_json()).is_empty
+
+
+def test_people_without_an_id_or_a_name_are_skipped_and_odd_values_get_defaults():
+    overview = parse_friends(
+        friends_json(
+            friends=[
+                {"username": "no id"}, {"id": 5}, {"id": 6, "username": ""}, "bob", None, {"id": True, "username": "x"},
+                {"id": 7, "username": "ok", "since": "yesterday", "shared_configs": "many"},
+            ]
+        )
+    )
+    assert overview.friends == (FriendView(7, "ok", None, 0, 0),)
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        None, [], "friends", {}, {"friends": [], "incoming": []}, {"friends": [], "incoming": [], "outgoing": "none"},
+        {"friends": {}, "incoming": [], "outgoing": []},
+    ],
+)
+def test_an_answer_that_is_not_a_friend_list_is_refused(raw):
+    with pytest.raises(ValueError):
+        parse_friends(raw)
+
+
+def test_friend_views_hold_only_names_and_numbers():
+    assert {f.name for f in dataclasses.fields(FriendView)} == {"id", "username", "at", "shared_configs", "games_together"}
+    assert {f.name for f in dataclasses.fields(FriendsOverview)} == {"friends", "incoming", "outgoing"}

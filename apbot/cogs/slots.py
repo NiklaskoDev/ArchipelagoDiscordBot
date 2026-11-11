@@ -9,7 +9,7 @@ from discord.app_commands import locale_str
 from discord.ext import commands
 
 from apbot.autocomplete import claimable_slot_choices, game_choices_public
-from apbot.cogs.common import SlotText, begin_slot_command, call_manager, slot_label, slot_options
+from apbot.cogs.common import SlotText, begin_slot_command, call_manager, resolve_username, slot_label, slot_options
 from apbot.errors import UserFacingError
 from apbot.i18n import language_of, t
 from apbot.manager.views import parse_game_detail
@@ -119,7 +119,7 @@ class SlotsCog(commands.Cog):
         note: app_commands.Range[str, 1, NOTE_LENGTH] | None = None,
     ) -> None:
         lang = language_of(interaction.locale)
-        recipient = self._recipient(member, username)
+        recipient = resolve_username(self.bot, member, username)
         target = await begin_slot_command(self.bot, interaction, game, slot)
         raw = await call_manager(
             self.bot,
@@ -149,16 +149,3 @@ class SlotsCog(commands.Cog):
         )
         message = t("The offer of **{slot}** is taken back", lang, slot=slot_label(raw, target.slot))
         await reply(interaction, embed=notice_embed(message, SUCCESS), ephemeral=True)
-
-    def _recipient(self, member: discord.User | discord.Member | None, username: str | None) -> str | None:
-        """The manager username to offer the slot to: that of the member's linked account, the one typed, or None for
-        an offer to whoever takes it."""
-        username = (username or "").strip() or None  # a blank username is no username
-        if member is not None and username is not None:
-            raise UserFacingError("Choose either a member or a username, not both")
-        if member is not None:
-            link = self.bot.links.get(member.id)
-            if link is None:
-                raise UserFacingError("{member} has not linked a manager account", member=f"<@{member.id}>")
-            return link.manager_username
-        return username

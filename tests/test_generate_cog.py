@@ -373,6 +373,54 @@ async def test_a_token_that_stops_working_during_the_follow_up_is_reported(bot, 
     assert bot.links.get(1001).status == "invalid"
 
 
+@pytest.mark.parametrize("status", [403, 404])
+async def test_a_job_the_manager_no_longer_shows_ends_the_follow_up_with_a_notice_and_a_link(bot, manager, sleeps, status):
+    link(bot)
+    bot.cache.set_site_url(SITE_URL)
+    manager.add("POST", JOBS, job_json(9, "queued"))
+    manager.add("GET", JOB, (status, {"detail": "That job does not exist"}))
+    interaction = asker(bot)
+    await generate(bot, interaction, sleeps=sleeps)  # nothing is raised: it would be answered with the generic error
+    [lost] = interaction.original_edits
+    assert lost["embed"].description == "The manager no longer shows this generation. Look at /games, or open the manager."
+    assert lost["embed"].colour == WARNING
+    [open_button] = lost["view"].children
+    assert open_button.url == f"{SITE_URL}/#/games"
+    assert len(sleeps) == 1 and len(interaction.messages) == 1  # no error message on top
+    assert bot.links.get(1001).status == "active"
+
+
+async def test_a_lost_job_notice_follows_the_users_language_and_needs_no_web_address(bot, manager, sleeps):
+    link(bot)
+    manager.add("POST", JOBS, job_json(9, "queued"))
+    manager.add("GET", JOB, (404, {"detail": "gone"}))
+    interaction = asker(bot, locale="de")
+    await generate(bot, interaction, sleeps=sleeps)
+    [lost] = interaction.original_edits
+    assert "Generierung" in lost["embed"].description and lost["view"] is None
+
+
+async def test_a_cancel_pressed_while_a_progress_edit_is_on_its_way_is_not_undone_by_it(bot, manager, sleeps):
+    link(bot)
+    manager.add("POST", JOBS, job_json(9, "queued"))
+    manager.add("GET", JOB, job_json(9, "running"), job_json(9, "running"), job_json(9, "cancelled"))
+    interaction = asker(bot)
+    shown = []  # whether the Cancel button was greyed out in what each edit carried
+
+    async def edit(**kwargs):
+        view = kwargs["view"]
+        if view is not None:
+            shown.append(view.cancel.disabled)
+        if len(shown) == 1:  # the person presses Cancel while this edit is still on its way to Discord
+            view.cancel_requested = True
+            view.cancel.disabled = True
+        interaction.original_edits.append(kwargs)
+
+    interaction.edit_original_response = edit
+    await generate(bot, interaction, sleeps=sleeps)
+    assert shown[0] is False and shown[1:] == [True, True]  # shown again at once, not only with the next look
+
+
 # --- the Cancel button -----------------------------------------------------------------------------------------------------------
 async def start_and_wait(bot, manager, interaction):
     """Starts /generate with a job that stays running; returns its task once the reply is out."""
