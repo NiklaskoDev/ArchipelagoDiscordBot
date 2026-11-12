@@ -7,8 +7,10 @@ Sections per version: Added, Changed, Fixed, Removed, Security.
 ### Added
 - `/friends` lists your friends and requests with buttons to accept, decline, take back or remove; `/friend add` asks a member or a manager user; a new alert sends a direct message with Accept and Decline for each new friend request. A manager without the friends feature gets a clear message. The bot's database gets a new migration (004, applied at startup).
 - `/generate` generates a game from your configs and follows it; `/game_archive` moves a game to the archive and back; `/game_delete` deletes one. All act as you, after a confirmation for archive and delete.
+- `/generate` also offers the configs your friends share with you; the friend gets a direct message if they turned the new alert "A friend puts me in a game they generate" on. `/config share` shares one of your configs with everyone (after a confirmation), all your friends or chosen friends, or stops sharing it.
 
 ### Fixed
+- `/friends`: when a list is longer than the menu (25 people), a note now says so and points to the manager for the rest; the buttons under a chosen person answer a removed or invalid link privately instead of failing after "thinking".
 - `/generate`: a Cancel pressed while a progress update is on its way no longer gets its greyed-out button undone, and a generation the manager no longer shows ends with a short private notice and a link to the manager instead of a generic error.
 
 ## [0.2.0] - 2026-11-11

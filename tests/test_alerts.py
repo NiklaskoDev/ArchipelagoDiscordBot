@@ -572,3 +572,67 @@ async def test_a_person_who_closed_their_dms_is_left_alone_for_a_day(make_engine
     live.clock.now += MUTE_SECONDS + 1
     await live.engine.handle_friend_requests([FriendRequestEvent(1001, 23, "eve")])
     assert len(live.dms) == 1
+
+
+
+# --- a friend generates a game with the person's config --------------------------------------------------------------------
+async def tell(live, bot, **kwargs):
+    values = {"by": "bob", "game": "Friday Run", "configs": ["alice"], **kwargs}
+    await live.engine.friend_game(bot.links.get(1001), **values)
+
+
+async def test_a_friend_generating_a_game_with_the_persons_config_is_one_direct_message(bot, make_engine):
+    live = make_engine("friend_game")
+    await tell(live, bot, configs=["alice", "alice 2"])
+    [message] = live.dms
+    embed = message.kwargs["embed"]
+    assert embed.title == "A friend puts you in a game"
+    assert embed.description == (
+        "**bob** is generating a game with your config alice, alice 2: **Friday Run**. "
+        "Once it is ready it is among your games."
+    )
+    assert message.kwargs["allowed_mentions"].everyone is False and "view" not in message.kwargs
+
+
+async def test_a_game_without_a_name_is_called_a_new_game(bot, make_engine):
+    live = make_engine("friend_game")
+    await tell(live, bot, game=None)
+    await tell(live, bot, game="")
+    assert [m.kwargs["embed"].description.split(": ")[1].split(".")[0] for m in live.dms] == ["**a new game**"] * 2
+
+
+async def test_the_friend_game_message_is_in_the_language_stored_for_the_person(bot, make_engine):
+    live = make_engine("friend_game", locale="de")
+    await tell(live, bot, game=None)
+    embed = live.dms[0].kwargs["embed"]
+    assert embed.title == "Ein Freund nimmt dich in ein Spiel auf"
+    assert embed.description == (
+        "**bob** generiert ein Spiel mit deiner Config alice: **ein neues Spiel**. "
+        "Sobald es fertig ist, gehört es zu deinen Spielen."
+    )
+
+
+async def test_names_cannot_format_or_ping(bot, make_engine):
+    live = make_engine("friend_game")
+    await tell(live, bot, by="@everyone **x**", game="*run* @here", configs=["@everyone", "_a_"])
+    description = live.dms[0].kwargs["embed"].description
+    assert "@everyone" not in description and "@here" not in description
+    assert "\\*\\*x\\*\\*" in description and "\\*run\\*" in description and "\\_a\\_" in description
+
+
+async def test_nothing_is_sent_when_the_alert_is_off_even_with_other_alerts_on(bot, make_engine):
+    live = make_engine("friend_request", "game_online")
+    await tell(live, bot)
+    assert live.dms == []
+
+
+async def test_a_person_who_closed_their_dms_is_left_alone_for_a_day_for_this_alert_too(bot, make_engine):
+    live = make_engine("friend_game")
+    (await live.directory(1001)).fail_with = forbidden()
+    await tell(live, bot)
+    (await live.directory(1001)).fail_with = None
+    await tell(live, bot)
+    assert live.dms == []
+    live.clock.now += MUTE_SECONDS + 1
+    await tell(live, bot)
+    assert len(live.dms) == 1

@@ -11,7 +11,7 @@ from discord import app_commands
 from discord.app_commands import locale_str
 from discord.ext import commands
 
-from apbot.autocomplete import config_choices
+from apbot.autocomplete import generate_config_choices
 from apbot.errors import UserFacingError
 from apbot.i18n import language_of, t
 from apbot.manager.errors import BadRequest, Conflict, Forbidden, ManagerUnavailable, NotFound
@@ -19,7 +19,7 @@ from apbot.manager.views import JOB_FINISHED, JobView, parse_job
 from apbot.services.slots import number_or_none
 from apbot.ui.embeds import error_embed, notice_embed
 from apbot.ui.format import safe_text
-from apbot.ui.generate import GenerationView, job_embed
+from apbot.ui.generate import GenerationView, config_name, job_embed
 from apbot.ui.respond import reply
 from apbot.ui.style import WARNING
 from apbot.ui.views import open_in_manager_view
@@ -111,16 +111,16 @@ class GenerateCog(commands.Cog):
         start=locale_str("start"),
     )
     @app_commands.autocomplete(
-        config=config_choices,
-        config2=config_choices,
-        config3=config_choices,
-        config4=config_choices,
-        config5=config_choices,
-        config6=config_choices,
-        config7=config_choices,
-        config8=config_choices,
-        config9=config_choices,
-        config10=config_choices,
+        config=generate_config_choices,
+        config2=generate_config_choices,
+        config3=generate_config_choices,
+        config4=generate_config_choices,
+        config5=generate_config_choices,
+        config6=generate_config_choices,
+        config7=generate_config_choices,
+        config8=generate_config_choices,
+        config9=generate_config_choices,
+        config10=generate_config_choices,
     )
     @app_commands.choices(spoiler=SPOILER_CHOICES)
     @app_commands.guild_only()
@@ -170,12 +170,26 @@ class GenerateCog(commands.Cog):
         job = parse_job(raw)
         self.bot.my_games.forget(interaction.user.id)
         view = GenerationView(interaction.user.id, lang, job.id)
-        me = self.bot.links.get(interaction.user.id).manager_user_id
+        link = self.bot.links.get(interaction.user.id)
+        me = link.manager_user_id
         await reply(interaction, embed=job_embed(job, lang, me=me), view=view, ephemeral=True)
+        await self._tell_friends(job, me, link.manager_username)
         try:
             await self._follow(interaction, token, job, view, lang, me)
         finally:
             view.stop()
+
+    async def _tell_friends(self, job: JobView, me: int, my_name: str) -> None:
+        """Tells each friend whose config is in the game (and who is linked and asked to hear it), once, now that the
+        manager has queued it, so a generation that fails later has told them too: it is a heads-up, not a promise."""
+        configs: dict[int, list[str]] = {}
+        for player in job.players:
+            if player.user_id not in (None, me):
+                configs.setdefault(player.user_id, []).append(config_name(player.filename))
+        for friend_id, names in configs.items():
+            friend = self.bot.links.by_manager_user(friend_id)
+            if friend is not None:
+                await self.bot.alerts.friend_game(friend, by=my_name, game=job.name, configs=names)
 
     async def _follow(
         self, interaction: discord.Interaction, token: str, job: JobView, view: GenerationView, lang: str, me: int

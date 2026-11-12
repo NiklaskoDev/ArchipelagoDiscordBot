@@ -188,9 +188,9 @@ async def test_leaving_a_server_deletes_its_live_data_only(bot):
         assert len(bot.db.query_all(f"SELECT * FROM {table} WHERE guild_id = 6000")) == 1, table
 
 
-def test_the_friend_request_alert_can_be_stored_and_every_offered_kind_has_a_label(db):
+def test_the_friend_alerts_can_be_stored_and_every_offered_kind_has_a_label(db):
     link(db)
     prefs = AlertPrefStore(db)
-    prefs.replace(1, ["friend_request", "slot_offered"])
-    assert prefs.enabled(1) == {"friend_request", "slot_offered"}
-    assert "friend_request" in ALERT_KINDS and set(ALERT_KINDS) <= set(ALERT_KIND_LABELS)
+    prefs.replace(1, ["friend_request", "friend_game", "slot_offered"])
+    assert prefs.enabled(1) == {"friend_request", "friend_game", "slot_offered"}
+    assert {"friend_request", "friend_game"} <= set(ALERT_KINDS) and set(ALERT_KINDS) <= set(ALERT_KIND_LABELS)

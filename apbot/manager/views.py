@@ -128,9 +128,15 @@ class SignupDetail(SignupSummary):
 
 @dataclass(frozen=True)
 class ConfigView:
+    """A saved config as the manager lists it. Only what a pick list needs: never the players' names or the content."""
+
     id: int
     name: str
     games: tuple[str, ...]
+    owner_id: int | None = field(default=None, kw_only=True)  # the manager user it belongs to
+    owner: str | None = field(default=None, kw_only=True)  # their username
+    share_with: str | None = field(default=None, kw_only=True)  # everyone | friends | chosen; None when not shared
+    shared_with: tuple[int, ...] = field(default=(), kw_only=True)  # the friends it is shared with by name (own configs)
 
 
 @dataclass(frozen=True)
@@ -435,7 +441,18 @@ def parse_added_warnings(raw: Any) -> tuple[str, ...]:
 
 def parse_config(raw: Mapping) -> ConfigView:
     """Raises ValueError when the answer is not a config."""
-    return ConfigView(id=_require_id(raw, "a config"), name=_text(raw.get("name")) or "?", games=_texts(raw.get("games")))
+    chosen = raw.get("shared_with") if isinstance(raw.get("shared_with"), list) else []
+    return ConfigView(
+        id=_require_id(raw, "a config"),
+        name=_text(raw.get("name")) or "?",
+        games=_texts(raw.get("games")),
+        owner_id=_optional_int(raw.get("user_id")),
+        owner=_text(raw.get("owner")),
+        share_with=_text(raw.get("share_with")) if raw.get("shared") is True else None,
+        shared_with=tuple(
+            person["id"] for person in chosen if isinstance(person, Mapping) and _optional_int(person.get("id")) is not None
+        ),
+    )
 
 
 def parse_check(raw: Any) -> CheckResult:

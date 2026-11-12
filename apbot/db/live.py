@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from apbot.db.database import Database
 from apbot.manager.views import FEED_KINDS
 
-ALERT_KINDS = ("item_received", "hint_found", "stuck_in_my_world", "game_online", "slot_offered", "friend_request")
+ALERT_KINDS = ("item_received", "hint_found", "stuck_in_my_world", "game_online", "slot_offered", "friend_request", "friend_game")
 # What a new thread shows. Items and joins are off: they are many, and a text client makes the server announce joins.
 DEFAULT_FEED_KINDS = tuple(kind for kind in FEED_KINDS if kind not in ("item", "join", "part"))
 

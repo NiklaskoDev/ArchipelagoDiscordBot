@@ -10,6 +10,7 @@ from discord.ext import commands
 
 from apbot.access import Access
 from apbot.cogs.alerts import AlertsCog
+from apbot.cogs.configs import ConfigsCog
 from apbot.cogs.friends import FriendsCog
 from apbot.cogs.games import GamesCog
 from apbot.cogs.generate import GenerateCog
@@ -145,6 +146,7 @@ class ApBot(commands.Bot):
         await self.add_cog(SlotsCog(self))
         await self.add_cog(GenerateCog(self))
         await self.add_cog(FriendsCog(self))
+        await self.add_cog(ConfigsCog(self))
         self.add_dynamic_items(HandoverAcceptButton, HandoverDeclineButton, HintStatusButton, FriendAnswerButton)
         await self._sync_commands()
         for task in self._periodic:

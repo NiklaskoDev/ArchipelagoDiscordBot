@@ -299,9 +299,19 @@ class ManagerClient:
     async def remove_entry(self, token: str, signup_id: int, entry_id: int) -> dict:
         return await self._send("DELETE", f"/api/signups/{int(signup_id)}/entries/{int(entry_id)}", token)
 
-    async def list_configs(self, token: str, *, quick: bool = False) -> list[dict]:
-        """The person's saved configs."""
-        return await self._get("/api/configs", token, timeout=QUICK_TIMEOUT if quick else None, retry=not quick)
+    async def list_configs(self, token: str, *, quick: bool = False, friends: bool = False) -> list[dict]:
+        """The person's saved configs; with `friends`, also the ones their friends share with them (a manager without
+        friends ignores the flag and answers with the person's own)."""
+        path = "/api/configs?friends=1" if friends else "/api/configs"
+        return await self._get(path, token, timeout=QUICK_TIMEOUT if quick else None, retry=not quick)
+
+    async def share_config(
+        self, token: str, config_id: int, *, shared: bool, share_with: str = "everyone", friends: Sequence[int] = ()
+    ) -> dict:
+        """Shares one of the person's configs with `share_with` (everyone | friends | chosen, the friends in `friends`),
+        or stops sharing it. Not retried, like every change."""
+        body = {"shared": bool(shared), "share_with": share_with, "friends": [int(friend) for friend in friends]}
+        return await self._put(f"/api/configs/{int(config_id)}/shared", token, body)
 
     async def create_config(self, token: str, name: str, content: str) -> dict:
         """Saves a config text in the person's library; the manager gives it a free name."""

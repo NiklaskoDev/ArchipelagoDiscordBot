@@ -59,6 +59,7 @@ ALERT_KIND_LABELS = {
     "game_online": translatable("One of my games comes online"),
     "slot_offered": translatable("A slot is offered to me"),
     "friend_request": translatable("Someone asks to be my friend"),
+    "friend_game": translatable("A friend puts me in a game they generate"),
 }
 
 

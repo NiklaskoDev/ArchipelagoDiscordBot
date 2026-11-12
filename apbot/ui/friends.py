@@ -101,6 +101,9 @@ def friends_embed(overview: FriendsOverview, lang: str) -> discord.Embed:
     for name, lines in sections:
         if lines:
             embed.add_field(name=name, value=field_lines(lines, "", lang), inline=False)
+    people = len(overview.incoming) + len(overview.outgoing) + len(overview.friends)
+    if people > SELECT_OPTIONS:  # the menu below cannot take them all: say so, and where the rest is
+        embed.set_footer(text=t("The menu offers the first {count} people. Find the others in the manager.", lang, count=SELECT_OPTIONS))
     return embed
 
 
@@ -159,21 +162,24 @@ class FriendActionView(AuthorView):
     def _callback_for(self, action: FriendAction) -> Callable[[discord.Interaction], Awaitable[None]]:
         async def callback(interaction: discord.Interaction) -> None:
             bot = interaction.client
+            token = bot.access.user_token(interaction)  # a removed link is answered privately, before anything is deferred
             await interaction.response.defer()
             user_id = interaction.user.id
             user = safe_text(self._friend.username, NAME_LIMIT)
             # The buttons can be minutes old, and the manager's remove deletes whatever row joins the two people: a
             # request answered or a friendship ended meanwhile must not be acted on again.
             bot.friend_directory.forget(user_id)
-            overview = await bot.access.run(
-                interaction, lambda token: bot.friend_directory.overview(user_id, token)
+            overview = await bot.access.call_as(
+                interaction, token, lambda user_token: bot.friend_directory.overview(user_id, user_token)
             )
             if self._friend.id not in {p.id for p in getattr(overview, STILL_THERE[self._kind])}:
                 gone = notice_embed(t(GONE_TEXTS[self._kind], self._lang, user=user), WARNING)
                 await interaction.edit_original_response(embed=gone, view=None)
                 self.stop()
                 return
-            await bot.access.run(interaction, lambda token: action.call(bot.manager, token, self._friend.id))
+            await bot.access.call_as(
+                interaction, token, lambda user_token: action.call(bot.manager, user_token, self._friend.id)
+            )
             bot.friend_directory.forget(user_id)
             embed = notice_embed(t(action.result, self._lang, user=user), SUCCESS)
             await interaction.edit_original_response(embed=embed, view=None)

@@ -7,7 +7,7 @@ open hints, a tracker when someone is stuck), sends the messages and stops writi
 
 import logging
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 import discord
@@ -32,6 +32,7 @@ log = logging.getLogger(__name__)
 ITEM_RECEIVED = "item_received"
 HINT_FOUND = "hint_found"
 STUCK_IN_MY_WORLD = "stuck_in_my_world"
+FRIEND_GAME = "friend_game"
 FEED_ALERTS = frozenset({ITEM_RECEIVED, HINT_FOUND, STUCK_IN_MY_WORLD})  # the ones that come from a game's activity
 MUTE_SECONDS = 24 * 60 * 60  # how long the bot leaves someone alone after Discord refused a direct message to them
 MAX_STUCK_ITEMS = 8
@@ -283,6 +284,22 @@ class AlertEngine:
             text = t("**{user}** wants to be your friend on the manager", lang, user=_name(event.from_name))
             embed = discord.Embed(title=t("Friend request", lang), description=text, colour=ACCENT)
             await self._send(link.discord_user_id, embed=embed, view=friend_request_view(event.from_id, lang))
+
+    async def friend_game(self, link: UserLink, *, by: str, game: str | None, configs: Sequence[str]) -> None:
+        """Tells a person that a friend is generating a game with their config(s), if they asked to hear it. `by` is the
+        friend's manager username, `game` the game's name (None while it has none)."""
+        if FRIEND_GAME not in self._prefs.enabled(link.discord_user_id):
+            return
+        lang = link.locale
+        text = t(
+            "**{user}** is generating a game with your config {configs}: **{game}**. Once it is ready it is among your games.",
+            lang,
+            user=_name(by),
+            configs=", ".join(_name(config) for config in configs),
+            game=_name(game) if game else t("a new game", lang),
+        )
+        embed = discord.Embed(title=t("A friend puts you in a game", lang), description=text, colour=ACCENT)
+        await self._send(link.discord_user_id, embed=embed)
 
     async def token_stopped(self, link: UserLink) -> None:
         """Tells a person, once, that the manager stopped accepting their token (they never have to have asked)."""

@@ -7,7 +7,10 @@ from fakes import (
     BOT_TOKEN,
     SITE_URL,
     USER_TOKEN,
+    FakeDirectory,
     FakeInteraction,
+    FakeMessageable,
+    forbidden,
     game_json,
     job_json,
     not_found,
@@ -499,3 +502,153 @@ async def test_the_cancel_button_of_someone_whose_token_stopped_working_gets_the
     task.cancel()
     gate.set()
     await asyncio.gather(task, return_exceptions=True)
+
+
+
+# --- friends in the game: they are told when the generation is queued --------------------------------------------------------
+OWN = {"filename": "alice.yaml", "user_id": 10, "owner": "alice", "config_id": 40}
+BOBS = {"filename": "bob-hk.yaml", "user_id": 11, "owner": "bob", "config_id": 77}
+BOBS_SECOND = {"filename": "bob-tunic.yml", "user_id": 11, "owner": "bob", "config_id": 78}
+CYS = {"filename": "cy.yaml", "user_id": 12, "owner": "cy", "config_id": 90}
+FRIEND_DISCORD = {11: 2002, 12: 2003}
+
+
+class Friends:
+    """Friends who are linked to the bot (manager user 11 is Discord 2002, 12 is 2003) and the direct messages they get."""
+
+    def __init__(self, bot, *, alert_on=(2002, 2003), linked=(2002, 2003)):
+        self.directory = FakeDirectory()
+        bot.alerts._fetch_user = self.directory
+        for discord_id in linked:
+            manager_id = {2002: 11, 2003: 12}[discord_id]
+            bot.links.save(discord_id, manager_id, f"friend{manager_id}", bot.cipher.encrypt(USER_TOKEN), USER_TOKEN[-4:], "en")
+        for discord_id in set(alert_on) & set(linked):
+            bot.alert_prefs.replace(discord_id, ["friend_game"])
+
+    def sent(self, discord_id: int) -> list:
+        user = self.directory.users.get(discord_id)
+        return user.sent if user else []
+
+    def texts(self, discord_id: int) -> list[str]:
+        return [message.kwargs["embed"].description for message in self.sent(discord_id)]
+
+
+def queue(manager, players, name=None, final="failed"):
+    manager.add("POST", JOBS, job_json(9, "queued", name=name, players=players))
+    manager.add("GET", JOB, job_json(9, final, name=name, players=players))
+
+
+async def test_a_friend_whose_config_is_in_the_game_gets_one_message_with_the_callers_manager_name_and_the_job_name(bot, manager, sleeps):
+    link(bot)
+    friends = Friends(bot)
+    queue(manager, [OWN, BOBS], name="Friday Run")
+    await generate(bot, asker(bot), "40", config2="77", sleeps=sleeps)
+    assert friends.texts(2002) == [
+        "**alice** is generating a game with your config bob-hk: **Friday Run**. Once it is ready it is among your games."
+    ]
+    assert friends.sent(2003) == []  # not in the game
+    assert friends.sent(2002)[0].kwargs["embed"].title == "A friend puts you in a game"
+
+
+async def test_a_game_without_a_name_is_called_a_new_game_and_two_configs_of_one_friend_are_one_message(bot, manager, sleeps):
+    link(bot)
+    friends = Friends(bot)
+    queue(manager, [OWN, BOBS, BOBS_SECOND])
+    await generate(bot, asker(bot), "40", config2="77", config3="78", sleeps=sleeps)
+    assert friends.texts(2002) == [
+        "**alice** is generating a game with your config bob-hk, bob-tunic: **a new game**. Once it is ready it is among your games."
+    ]
+
+
+async def test_each_friend_gets_their_own_message_with_only_their_configs(bot, manager, sleeps):
+    link(bot)
+    friends = Friends(bot)
+    queue(manager, [BOBS, CYS], name="Run")
+    await generate(bot, asker(bot), "77", config2="90", sleeps=sleeps)
+    assert [len(friends.sent(2002)), len(friends.sent(2003))] == [1, 1]
+    assert "your config bob-hk:" in friends.texts(2002)[0] and "cy" not in friends.texts(2002)[0]
+    assert "your config cy:" in friends.texts(2003)[0] and "bob" not in friends.texts(2003)[0]
+
+
+async def test_the_message_follows_the_friends_language_not_the_callers(bot, manager, sleeps):
+    link(bot)
+    friends = Friends(bot)
+    bot.links.set_locale(2002, "de")
+    queue(manager, [BOBS], name="Run")
+    await generate(bot, asker(bot, locale="fr"), "77", sleeps=sleeps)
+    assert friends.texts(2002) == [
+        "**alice** generiert ein Spiel mit deiner Config bob-hk: **Run**. Sobald es fertig ist, gehört es zu deinen Spielen."
+    ]
+
+
+async def test_the_friend_is_told_when_the_job_is_queued_before_it_is_followed(bot, manager):
+    link(bot)
+    friends = Friends(bot)
+    queue(manager, [BOBS], name="Run")
+    told_at_first_look: list[int] = []
+
+    async def sleep(seconds: float) -> None:
+        told_at_first_look.append(len(friends.sent(2002)))
+
+    cog = GenerateCog(bot, sleep=sleep)
+    await cog.generate.callback(cog, asker(bot), "77")
+    assert told_at_first_look[0] == 1
+
+
+async def test_a_game_made_of_the_callers_own_configs_tells_nobody(bot, manager, sleeps):
+    link(bot)
+    friends = Friends(bot)
+    bot.alert_prefs.replace(1001, ["friend_game"])
+    queue(manager, [OWN, {**OWN, "filename": "second.yaml", "config_id": 41}])
+    interaction = asker(bot)
+    await generate(bot, interaction, "40", config2="41", sleeps=sleeps)
+    assert friends.sent(1001) == [] and friends.sent(2002) == [] and friends.sent(2003) == []
+    assert len(friends.directory.users) == 0
+
+
+async def test_a_friend_who_is_not_linked_to_the_bot_is_not_told_and_nothing_fails(bot, manager, sleeps):
+    link(bot)
+    friends = Friends(bot, linked=())
+    queue(manager, [OWN, BOBS], name="Run")
+    interaction = asker(bot)
+    await generate(bot, interaction, "40", config2="77", sleeps=sleeps)
+    assert friends.sent(2002) == [] and interaction.messages  # the caller still sees the generation
+
+
+async def test_a_friend_who_did_not_turn_the_alert_on_is_not_told(bot, manager, sleeps):
+    link(bot)
+    friends = Friends(bot, alert_on=())
+    bot.alert_prefs.replace(2002, ["game_online"])
+    queue(manager, [BOBS], name="Run")
+    await generate(bot, asker(bot), "77", sleeps=sleeps)
+    assert friends.sent(2002) == []
+
+
+async def test_a_player_without_an_account_any_more_tells_no_one(bot, manager, sleeps):
+    link(bot)
+    friends = Friends(bot)
+    queue(manager, [OWN, {"filename": "gone.yaml", "user_id": None, "owner": None, "config_id": 5}])
+    await generate(bot, asker(bot), "40", config2="5", sleeps=sleeps)
+    assert friends.sent(2002) == [] and friends.sent(2003) == []
+
+
+@pytest.mark.parametrize("status", [409, 403, 400, 404])
+async def test_a_refused_generation_tells_no_friend(bot, manager, sleeps, status):
+    link(bot)
+    friends = Friends(bot)
+    manager.add("POST", JOBS, (status, {"detail": "No"}))
+    await generate(bot, asker(bot), "77", sleeps=sleeps)
+    assert friends.sent(2002) == [] and friends.sent(2003) == []
+
+
+async def test_a_friend_who_closed_their_dms_does_not_disturb_the_generation(bot, manager, sleeps):
+    link(bot)
+    friends = Friends(bot)
+    friends.directory.users[2002] = FakeMessageable(2002)
+    friends.directory.users[2002].fail_with = forbidden()
+    manager.add("POST", JOBS, job_json(9, "queued", players=[BOBS]))
+    manager.add("GET", JOB, job_json(9, "succeeded", game_id=5, players=[BOBS]))
+    manager.add("GET", "/api/games", [game_json(5, "Friday")])
+    interaction = asker(bot)
+    await generate(bot, interaction, "77", sleeps=sleeps)
+    assert interaction.original_edits[-1]["embed"].colour == SUCCESS

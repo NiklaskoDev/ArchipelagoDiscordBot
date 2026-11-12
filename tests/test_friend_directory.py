@@ -1,5 +1,5 @@
 import pytest
-from fakes import USER_TOKEN, friend_json, friends_json
+from fakes import USER_TOKEN, config_json, friend_json, friends_json
 
 from apbot.errors import UserFacingError
 from apbot.manager.errors import ManagerUnavailable
@@ -79,3 +79,65 @@ async def test_an_answer_the_bot_does_not_know_is_a_manager_problem_not_a_crash(
         await directory.overview(1001, USER_TOKEN)
     manager.add("GET", "/api/friends", friends_json())
     assert (await directory.overview(1001, USER_TOKEN)).is_empty
+
+
+# --- the library: own configs and the ones friends share -----------------------------------------------------------------
+LIBRARY = [
+    config_json(40, "alice.yaml", user_id=10, owner="alice"),
+    config_json(77, "bob.yaml", user_id=20, owner="bob", shared=True, share_with="friends"),
+]
+
+
+async def test_the_library_is_asked_with_friends_one_by_the_persons_token_and_kept_for_a_minute(manager, directory, clock):
+    manager.add("GET", "/api/configs", LIBRARY)
+    first = await directory.library(1001, USER_TOKEN)
+    assert [(c.id, c.owner) for c in first] == [(40, "alice"), (77, "bob")]
+    clock.now += FRIENDS_TTL - 1
+    assert await directory.library(1001, USER_TOKEN) is first
+    [request] = manager.requests
+    assert (request.url.path, request.url.query) == ("/api/configs", b"friends=1")
+    assert request.headers["Authorization"] == f"Bearer {USER_TOKEN}" and request.extensions["timeout"]["read"] == 2
+    clock.now += 2
+    await directory.library(1001, USER_TOKEN)
+    assert len(manager.requests) == 2
+
+
+async def test_a_library_that_could_not_be_read_is_not_kept(manager, directory):
+    manager.add("GET", "/api/configs", (503, {"detail": "busy"}))
+    with pytest.raises(ManagerUnavailable):
+        await directory.library(1001, USER_TOKEN)
+    assert directory.cached_library(1001) is None
+    manager.add("GET", "/api/configs", LIBRARY)
+    await directory.library(1001, USER_TOKEN)
+    assert len(manager.requests) == 2
+
+
+async def test_the_last_library_can_be_looked_at_without_asking_and_forgetting_it_asks_again(manager, directory, clock):
+    assert directory.cached_library(1001) is None
+    manager.add("GET", "/api/configs", LIBRARY)
+    kept = await directory.library(1001, USER_TOKEN)
+    assert directory.cached_library(1001) is kept
+    directory.forget_library(1001)
+    directory.forget_library(9999)  # someone never seen is no error
+    assert directory.cached_library(1001) is None
+    await directory.library(1001, USER_TOKEN)
+    assert len(manager.requests) == 2
+    clock.now += FRIENDS_TTL + 1
+    assert directory.cached_library(1001) is None
+
+
+async def test_a_change_of_friends_also_drops_the_library_because_it_holds_their_configs(manager, directory):
+    manager.add("GET", "/api/configs", LIBRARY)
+    await directory.library(1001, USER_TOKEN)
+    directory.forget(1001)
+    assert directory.cached_library(1001) is None
+    await directory.library(1001, USER_TOKEN)
+    assert len(manager.requests) == 2
+
+
+async def test_forgetting_the_library_keeps_the_friend_overview(manager, directory):
+    manager.add("GET", "/api/friends", friends_json())
+    await directory.overview(1001, USER_TOKEN)
+    directory.forget_library(1001)
+    await directory.overview(1001, USER_TOKEN)
+    assert len(manager.requests) == 1

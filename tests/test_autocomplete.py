@@ -1,11 +1,12 @@
 import pytest
-from fakes import BOT_TOKEN, SITE_URL, USER_TOKEN, FakeInteraction, by_token, game_json, slot_json
+from fakes import BOT_TOKEN, SITE_URL, USER_TOKEN, FakeInteraction, by_token, config_json, game_json, slot_json
 
 from apbot.autocomplete import (
     LOADING_VALUE,
     archive_game_choices,
     claimable_slot_choices,
     delete_game_choices,
+    generate_config_choices,
     game_choices_mine,
     game_choices_visible,
     is_loading_choice,
@@ -330,3 +331,97 @@ async def test_when_the_manager_does_not_answer_the_last_list_kept_is_used(bot, 
     bot.my_games.cached = lambda owner: tuple(parse_games([rights(1, "Kept", can_archive=True, can_manage=True)]))
     assert values(await archive_game_choices(typing(bot), "")) == [("Kept", "1")]
     assert values(await delete_game_choices(typing(bot), "")) == [("Kept", "1")]
+
+
+
+# --- configs to generate with: own, and the ones friends share ------------------------------------------------------------
+LIBRARY = [
+    config_json(40, "alice.yaml", user_id=10, owner="alice"),
+    config_json(41, "Second.yaml", user_id=10, owner="alice"),
+    config_json(77, "bob-hk.yaml", user_id=20, owner="bob", shared=True, share_with="friends"),
+]
+
+
+def generating(bot, focused="config", locale="en-US", **namespace) -> FakeInteraction:
+    """The person is typing in the option `focused` of /generate; `namespace` holds the options typed so far."""
+    interaction = FakeInteraction(bot, locale=locale, user_id=1001, namespace=namespace)
+    interaction.data = {"options": [{"name": name, "value": value, "focused": name == focused} for name, value in namespace.items()]}
+    return interaction
+
+
+async def test_own_configs_are_plain_and_a_friends_names_its_owner_in_the_persons_language(bot, manager):
+    link(bot)
+    manager.add("GET", "/api/configs", LIBRARY)
+    assert values(await generate_config_choices(generating(bot), "")) == [
+        ("alice.yaml", "40"), ("Second.yaml", "41"), ("bob-hk.yaml — from bob", "77"),
+    ]
+    assert values(await generate_config_choices(generating(bot, locale="de"), "hk")) == [("bob-hk.yaml — von bob", "77")]
+    assert values(await generate_config_choices(generating(bot, locale="fr"), "hk")) == [("bob-hk.yaml — de bob", "77")]
+    assert values(await generate_config_choices(generating(bot, locale="nl"), "hk")) == [("bob-hk.yaml — van bob", "77")]
+    [request] = manager.requests  # one look for all of it, with friends one, as the person
+    assert (request.url.query, request.headers["Authorization"]) == (b"friends=1", f"Bearer {USER_TOKEN}")
+
+
+async def test_the_search_matches_the_configs_name_not_its_owner_and_is_not_case_sensitive(bot, manager):
+    link(bot)
+    manager.add("GET", "/api/configs", [config_json(40, "Second.yaml", user_id=10), config_json(77, "hk.yaml", user_id=20, owner="bob")])
+    assert [v for _, v in values(await generate_config_choices(generating(bot), "SECOND"))] == ["40"]
+    assert [v for _, v in values(await generate_config_choices(generating(bot), "HK"))] == ["77"]
+    assert await generate_config_choices(generating(bot), "bob") == []
+
+
+async def test_names_are_clipped_to_discords_limit_and_a_friends_keeps_its_suffix(bot, manager):
+    link(bot)
+    long_name = "x" * 150
+    manager.add(
+        "GET", "/api/configs",
+        [
+            config_json(40, long_name, user_id=10, owner="alice"),
+            config_json(77, long_name, user_id=20, owner="b" * 80),
+        ],
+    )
+    own, friends = await generate_config_choices(generating(bot), "")
+    assert len(own.name) == 100 and own.name.endswith("…")
+    assert len(friends.name) <= 100 and friends.name.endswith(" — from " + "b" * 31 + "…") and friends.value == "77"
+
+
+async def test_configs_already_picked_in_other_options_are_left_out_but_the_text_being_typed_is_not_a_pick(bot, manager):
+    link(bot)
+    manager.add("GET", "/api/configs", LIBRARY)
+    picked = await generate_config_choices(generating(bot, "config2", config="40", config2=""), "")
+    assert [v for _, v in values(picked)] == ["41", "77"]
+    manager.add("GET", "/api/configs", [config_json(41, "Level 41.yaml", user_id=10), config_json(42, "Level 42.yaml", user_id=10)])
+    bot.friend_directory.forget_library(1001)
+    typed = await generate_config_choices(generating(bot, "config2", config="40", config2="41"), "41")
+    assert [v for _, v in values(typed)] == ["41"]  # "41" is only what is typed in this option, not a pick
+    bot.friend_directory.forget_library(1001)
+    manager.add("GET", "/api/configs", LIBRARY)
+    both = await generate_config_choices(generating(bot, "config3", config="40", config2="77", config3=""), "")
+    assert [v for _, v in values(both)] == ["41"]
+    ignored = await generate_config_choices(generating(bot, "config3", config="not a number", config3=""), "")
+    assert len(ignored) == 3
+
+
+async def test_nothing_is_left_out_when_the_option_being_typed_in_is_not_known(bot, manager):
+    link(bot)
+    manager.add("GET", "/api/configs", LIBRARY)
+    unknown = FakeInteraction(bot, user_id=1001, namespace={"config": "40"})
+    assert len(await generate_config_choices(unknown, "")) == 3
+
+
+async def test_at_most_twenty_five_configs_are_suggested(bot, manager):
+    link(bot)
+    manager.add("GET", "/api/configs", [config_json(n, f"c{n}.yaml", user_id=10) for n in range(40, 80)])
+    assert len(await generate_config_choices(generating(bot), "")) == 25
+
+
+async def test_without_a_fresh_list_the_last_one_kept_is_used_else_nothing_and_never_an_error(bot, manager):
+    assert await generate_config_choices(generating(bot), "") == []  # not linked
+    link(bot)
+    manager.add("GET", "/api/configs", (503, {"detail": "busy"}))
+    assert await generate_config_choices(generating(bot), "") == []
+    manager.add("GET", "/api/configs", LIBRARY)
+    await generate_config_choices(generating(bot), "")
+    bot.links.mark_invalid(1001)  # the token cannot be used now, the kept list still can
+    assert [v for _, v in values(await generate_config_choices(generating(bot), ""))] == ["40", "41", "77"]
+    assert len(manager.requests) == 2

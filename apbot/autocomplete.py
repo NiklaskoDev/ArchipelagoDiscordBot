@@ -12,7 +12,7 @@ from discord import app_commands
 from apbot.errors import NotLinkedError, UserFacingError
 from apbot.i18n import language_of, t
 from apbot.manager.errors import ManagerError
-from apbot.manager.views import GameSummary, listed_games
+from apbot.manager.views import ConfigView, GameSummary, listed_games
 from apbot.services.my_games import private_games
 from apbot.services.slots import number_or_none
 from apbot.services.text_client import Names
@@ -245,6 +245,57 @@ async def config_choices(interaction: discord.Interaction, current: str) -> list
         app_commands.Choice(name=clip(config.name, CHOICE_NAME), value=str(config.id))
         for config in configs
         if _matches(config.name, current)
+    ][:AUTOCOMPLETE]
+
+
+OWNER_NAME_LIMIT = 32  # characters of a friend's name in a suggestion, so the config's own name keeps most of the room
+GENERATE_CONFIG_OPTIONS = ("config", *(f"config{n}" for n in range(2, 11)))  # the options of /generate that take a config
+
+
+def _focused_option(interaction: discord.Interaction) -> str | None:
+    """The name of the option the person is typing in, as Discord sent it."""
+    for option in (getattr(interaction, "data", None) or {}).get("options", ()):
+        if option.get("focused"):
+            return option.get("name")
+    return None
+
+
+def _configs_picked_elsewhere(interaction: discord.Interaction) -> set[int]:
+    """The configs already chosen in the other `config` options of the command. The option being typed in is left out:
+    its text is a search, and a number in it is not a pick. Nothing is left out when that option is not known."""
+    focused = _focused_option(interaction)
+    if focused is None:
+        return set()
+    picked = (_typed_number(interaction, option) for option in GENERATE_CONFIG_OPTIONS if option != focused)
+    return {config_id for config_id in picked if config_id is not None}
+
+
+def _generate_choice(config: ConfigView, me: int | None, lang: str) -> app_commands.Choice[str]:
+    if config.owner_id == me or not config.owner:
+        return app_commands.Choice(name=clip(config.name, CHOICE_NAME), value=str(config.id))
+    suffix = SEPARATOR + t("from {owner}", lang, owner=clip(config.owner, OWNER_NAME_LIMIT))
+    return app_commands.Choice(name=clip(config.name, max(CHOICE_NAME - len(suffix), 1)) + suffix, value=str(config.id))
+
+
+async def generate_config_choices(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
+    """The configs the person may generate with: their own, and the ones their friends share with them (marked with the
+    friend's name). Those already picked in the command are left out. Without a fresh list from the manager: the last
+    one kept, or nothing."""
+    bot: ApBot = interaction.client
+    lang = language_of(interaction.locale)
+    owner = interaction.user.id
+    try:
+        library = await bot.friend_directory.library(owner, bot.access.user_token(interaction))
+    except (NotLinkedError, UserFacingError, ManagerError, TypeError) as exc:
+        log.debug("No configs to generate with to suggest: %s", exc)
+        library = bot.friend_directory.cached_library(owner) or ()
+    link = bot.links.get(owner)
+    me = link.manager_user_id if link else None
+    picked = _configs_picked_elsewhere(interaction)
+    return [
+        _generate_choice(config, me, lang)
+        for config in library
+        if config.id not in picked and _matches(config.name, current)
     ][:AUTOCOMPLETE]
 
 

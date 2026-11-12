@@ -2,10 +2,11 @@ import dataclasses
 import json
 
 import pytest
-from fakes import SECRETS, friend_json, friends_json, game_json, job_json, signup_json, slot_json
+from fakes import SECRETS, config_json, friend_json, friends_json, game_json, job_json, signup_json, slot_json
 
 from apbot.manager.views import (
     JOB_FINISHED,
+    ConfigView,
     FriendsOverview,
     FriendView,
     GameDetail,
@@ -16,6 +17,7 @@ from apbot.manager.views import (
     SlotView,
     listed_games,
     open_signups,
+    parse_config,
     parse_friends,
     parse_game_detail,
     parse_game_summary,
@@ -242,3 +244,32 @@ def test_an_answer_that_is_not_a_friend_list_is_refused(raw):
 def test_friend_views_hold_only_names_and_numbers():
     assert {f.name for f in dataclasses.fields(FriendView)} == {"id", "username", "at", "shared_configs", "games_together"}
     assert {f.name for f in dataclasses.fields(FriendsOverview)} == {"friends", "incoming", "outgoing"}
+
+
+# --- configs -----------------------------------------------------------------------------------------------------------
+def test_a_config_reads_its_owner_and_who_it_is_shared_with():
+    config = parse_config(
+        config_json(
+            40, "alice.yaml", user_id=10, owner="alice", shared=True, share_with="chosen",
+            shared_with=[{"id": 20, "username": "bob"}, {"id": 21, "username": "cy"}, {"username": "no id"}, "junk"],
+        )
+    )
+    assert (config.id, config.name, config.games) == (40, "alice.yaml", ("Timespinner",))
+    assert (config.owner_id, config.owner, config.share_with, config.shared_with) == (10, "alice", "chosen", (20, 21))
+
+
+def test_a_config_that_is_not_shared_has_no_audience_even_when_the_manager_names_one():
+    config = parse_config(config_json(40, shared=False, share_with="everyone", shared_with=[{"id": 20}]))
+    assert config.share_with is None
+    assert parse_config(config_json(41, shared=True, share_with="friends")).share_with == "friends"
+
+
+def test_a_config_from_an_older_manager_has_defaults_for_the_new_fields():
+    config = parse_config({"id": 5, "name": "x", "games": []})
+    assert (config.owner_id, config.owner, config.share_with, config.shared_with) == (None, None, None, ())
+
+
+def test_a_config_holds_no_player_names_description_or_content():
+    assert {f.name for f in dataclasses.fields(ConfigView)} == {
+        "id", "name", "games", "owner_id", "owner", "share_with", "shared_with",
+    }

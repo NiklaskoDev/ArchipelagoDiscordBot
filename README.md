@@ -64,7 +64,8 @@ The bot reads each game's activity feed from the manager every few seconds while
 - **Direct messages (`/alerts`).** Linked people can ask for a message when an item arrives for one of their slots, when
   an item they were hinted is found, when a player is stuck and waits for items in their world, when one of their games
   comes online, when a slot is offered to them (with buttons to take it over or decline), and when someone asks to be
-  their friend (with buttons to accept or decline). This works for private
+  their friend (with buttons to accept or decline), and when a friend generates a game with one of their configs.
+  This works for private
   games too, because the bot reads those with the player's own token. Someone who has closed their DMs is left alone
   for a day. If the manager stops accepting a person's token, they get one message about it.
 - **Overview.** With an overview channel set, one pinned message lists the games and open sign-up rounds and is edited
@@ -101,11 +102,12 @@ and left. That is why joins and leaves are off in game threads by default.
 
 These commands act as you, with your linked token, and the manager decides what you may do. They need a token with
 access *Read and change*, and they only work in a server (the replies are private). The configs are the ones saved in
-your manager library; they are picked from a list as you type.
+your manager library, and the ones your friends share with you (marked "from" and the friend's name); they are picked
+from a list as you type.
 
 | Command | Who | What |
 |---|---|---|
-| `/generate config: config2: … config10: name: spoiler: race: seed: start:` | linked users, organizer role if set | Generates a game from up to ten of your configs and follows it in the reply: the place in the queue, then the result, with a button to open the game in the manager and a *Cancel generation* button while it waits or runs. `spoiler` is none, basic (default), playthrough or full; `seed` is a whole number; `start` (default on) starts the game's server once it is generated. If the manager says no, its reason is shown, for example a game that is not installed or one of the limits below. |
+| `/generate config: config2: … config10: name: spoiler: race: seed: start:` | linked users, organizer role if set | Generates a game from up to ten of your configs and follows it in the reply: the place in the queue, then the result, with a button to open the game in the manager and a *Cancel generation* button while it waits or runs. `spoiler` is none, basic (default), playthrough or full; `seed` is a whole number; `start` (default on) starts the game's server once it is generated. If the manager says no, its reason is shown, for example a game that is not installed or one of the limits below. Picking a friend's config puts that friend in the game; they get a direct message when it is queued if they turned on the alert "A friend puts me in a game they generate". |
 | `/game_archive action: game:` | linked users, organizer role if set | Moves a game to the archive (its server stops; it is listed as finished if every player reached their goal, otherwise as aborted) or takes it out again (`action: restore`), after a confirmation. Choose the action first, so the list only shows fitting games. Only whoever runs the game, or the player who generated it, may. |
 | `/game_delete game:` | linked users, organizer role if set | Deletes a game with its files, save and history, after a confirmation that says it cannot be undone. Only the organizer of the game and administrators may. |
 
@@ -128,7 +130,14 @@ change nothing. Adding a friend needs a token with access *Read and change*.
 The alert "Someone asks to be my friend" (`/alerts`) sends you a direct message for each new friend request, with
 *Accept* and *Decline* buttons. The manager has no push for this, so the bot looks at the friend requests of the people
 who turned this alert on every two minutes (one more request per such person); requests that arrive while the bot is
-down are not announced.
+down are not announced. The alert "A friend puts me in a game they generate" sends one direct message when a friend
+queues a game with one of your configs; it needs no polling.
+
+### Sharing configs
+
+| Command | Who | What |
+|---|---|---|
+| `/config share config: audience:` | linked users | Shares one of your saved configs with `everyone` (every player on the manager; the bot asks first, because the config's content, player names included, becomes readable by all of them), `friends` (all your friends), `chosen` (a menu of your friends, the ones who see it now ticked; at most 25 are shown) or `stop` (no longer shared). Friends you share with can generate with the config, which puts you in their game. Needs a token with access *Read and change* and, like the other friend commands, a manager that has friends. |
 
 ### Sign-ups
 
@@ -257,7 +266,8 @@ What the bot stores, in `DATA_DIR/bot.sqlite3`:
 
 Not stored: the games a linked person's account can see are kept in memory for up to a minute (for `/games` and the
 game suggestions) and are gone after a restart. The same goes for a person's friend list (kept for a minute for
-`/friends`) and, for people who turned on the friend request alert, which requests were already seen (so only new
+`/friends`), the configs they may generate with (their own and their friends'; kept for a minute for the suggestions of
+`/generate`) and, for people who turned on the friend request alert, which requests were already seen (so only new
 ones are announced). Only manager usernames of friends are shown, never anyone's Discord identity.
 
 `/mydata` shows a person everything stored about them. `/unlink` deletes it, takes the person out of the game roles

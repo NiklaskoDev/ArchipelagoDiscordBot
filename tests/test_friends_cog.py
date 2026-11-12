@@ -535,3 +535,89 @@ async def test_the_list_is_read_with_the_pressers_token_before_anything_is_chang
     check, delete = manager.requests[-2:]
     assert (check.method, check.url.path) == ("GET", FRIENDS) and (delete.method, delete.url.path) == ("DELETE", "/api/friends/20")
     assert check.headers["Authorization"] == f"Bearer {USER_TOKEN}"
+
+
+
+# --- a list that is longer than the menu ---------------------------------------------------------------------------------------
+async def test_a_list_longer_than_the_menu_says_so_and_points_to_the_manager(bot, manager):
+    link(bot)
+    people = [friend_json(100 + n, f"friend{n:02d}", since=100.0) for n in range(26)]
+    manager.add("GET", FRIENDS, overview(friends=people))
+    interaction = asker(bot)
+    await show_friends(bot, interaction)
+    message = interaction.messages[0]
+    assert len(message["view"].select.options) == 25
+    assert message["embed"].footer.text == "The menu offers the first 25 people. Find the others in the manager."
+
+
+async def test_the_people_of_all_three_lists_count_towards_the_menu_limit(bot, manager):
+    link(bot)
+    manager.add(
+        "GET", FRIENDS,
+        overview(
+            incoming=[friend_json(200 + n, f"in{n:02d}", asked_at=1.0) for n in range(10)],
+            outgoing=[friend_json(300 + n, f"out{n:02d}", asked_at=1.0) for n in range(10)],
+            friends=[friend_json(100 + n, f"friend{n:02d}", since=1.0) for n in range(6)],
+        ),
+    )
+    interaction = asker(bot)
+    await show_friends(bot, interaction)
+    assert interaction.messages[0]["embed"].footer.text.startswith("The menu offers the first 25 people")
+
+
+@pytest.mark.parametrize("count", [1, 24, 25])
+async def test_a_list_the_menu_can_hold_has_no_note(bot, manager, count):
+    link(bot)
+    manager.add("GET", FRIENDS, overview(friends=[friend_json(100 + n, f"friend{n:02d}", since=1.0) for n in range(count)]))
+    interaction = asker(bot)
+    await show_friends(bot, interaction)
+    assert interaction.messages[0]["embed"].footer.text is None
+
+
+async def test_the_note_follows_the_persons_language(bot, manager):
+    link(bot)
+    manager.add("GET", FRIENDS, overview(friends=[friend_json(100 + n, f"friend{n:02d}", since=1.0) for n in range(30)]))
+    interaction = asker(bot, locale="de")
+    await show_friends(bot, interaction)
+    assert interaction.messages[0]["embed"].footer.text == "Das Menü bietet die ersten 25 Personen an. Die übrigen findest du im Manager."
+
+
+# --- a link that is gone when a button is pressed ---------------------------------------------------------------------------------
+async def pressed_after_the_link_changed(bot, manager, change):
+    edit, _ = await choose(bot, manager, "incoming:21")
+    change()
+    manager.requests.clear()
+    click = FakeInteraction(bot, user_id=1001)
+    return click, edit["view"]
+
+
+async def test_a_button_of_someone_who_unlinked_gets_the_not_linked_error_before_anything_is_deferred(bot, manager):
+    click, view = await pressed_after_the_link_changed(bot, manager, lambda: bot.links.delete(1001))
+    with pytest.raises(NotLinkedError):
+        await view.children[0].callback(click)
+    assert not click.response.deferred and click.original_edits == [] and manager.requests == []
+
+
+async def test_a_button_of_someone_whose_link_stopped_working_gets_the_link_again_message_before_anything_is_deferred(bot, manager):
+    click, view = await pressed_after_the_link_changed(bot, manager, lambda: bot.links.mark_invalid(1001))
+    with pytest.raises(UserFacingError) as error:
+        await view.children[0].callback(click)
+    assert "run /link again" in error.value.message("en")
+    assert not click.response.deferred and click.original_edits == [] and manager.requests == []
+
+
+async def test_the_error_handler_answers_privately_for_a_button_without_a_link(bot, manager):
+    click, view = await pressed_after_the_link_changed(bot, manager, lambda: bot.links.delete(1001))
+    with pytest.raises(NotLinkedError) as error:
+        await view.children[0].callback(click)
+    await view.on_error(click, error.value, None)
+    [message] = click.messages
+    assert message["ephemeral"] is True and "/link" in message["embed"].description
+
+
+async def test_a_button_uses_the_token_taken_before_the_defer_for_every_call(bot, manager):
+    click, view = await pressed_after_the_link_changed(bot, manager, lambda: None)
+    manager.add("GET", FRIENDS, FULL)
+    manager.add("POST", "/api/friends/21/accept", {"ok": True})
+    await view.children[0].callback(click)
+    assert [r.headers["Authorization"] for r in manager.requests] == [f"Bearer {USER_TOKEN}"] * 2

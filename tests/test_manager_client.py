@@ -309,3 +309,50 @@ async def test_the_friend_calls_take_numbers_in_their_paths_only(manager: FakeMa
         with pytest.raises(ValueError):
             await call()
     assert manager.requests == []
+
+
+
+# --- configs of friends and sharing --------------------------------------------------------------------------------------
+async def test_the_configs_of_friends_are_asked_for_with_friends_one_and_the_plain_list_is_unchanged(manager: FakeManager):
+    manager.add("GET", "/api/configs", [])
+    await manager.client.list_configs(BOT_TOKEN)
+    await manager.client.list_configs(BOT_TOKEN, friends=True)
+    plain, with_friends = manager.requests
+    assert (plain.url.path, plain.url.query) == ("/api/configs", b"")
+    assert (with_friends.url.path, with_friends.url.query) == ("/api/configs", b"friends=1")
+
+
+async def test_the_library_of_friends_can_be_asked_quickly_without_a_retry(manager: FakeManager):
+    manager.add("GET", "/api/configs", (503, {"detail": "busy"}), [])
+    with pytest.raises(ManagerUnavailable):
+        await manager.client.list_configs(BOT_TOKEN, quick=True, friends=True)
+    assert len(manager.requests) == 1 and manager.requests[0].extensions["timeout"]["read"] == 2
+
+
+async def test_sharing_a_config_puts_exactly_the_audience_and_the_friends(manager: FakeManager):
+    manager.add("PUT", "/api/configs/40/shared", {"id": 40})
+    await manager.client.share_config(BOT_TOKEN, 40, shared=True, share_with="chosen", friends=[20, "21"])
+    await manager.client.share_config(BOT_TOKEN, "40", shared=True)
+    await manager.client.share_config(BOT_TOKEN, 40, shared=False)
+    bodies = [json.loads(request.content) for request in manager.requests]
+    assert [r.method for r in manager.requests] == ["PUT"] * 3
+    assert bodies == [
+        {"shared": True, "share_with": "chosen", "friends": [20, 21]},
+        {"shared": True, "share_with": "everyone", "friends": []},
+        {"shared": False, "share_with": "everyone", "friends": []},
+    ]
+    assert all(r.headers["Authorization"] == f"Bearer {BOT_TOKEN}" for r in manager.requests)
+
+
+async def test_sharing_is_never_retried_and_takes_numbers_only(manager: FakeManager):
+    manager.add("PUT", "/api/configs/40/shared", (503, {"detail": "busy"}), {"id": 40})
+    with pytest.raises(ManagerUnavailable):
+        await manager.client.share_config(BOT_TOKEN, 40, shared=True)
+    assert len(manager.requests) == 1
+    for call in (
+        lambda: manager.client.share_config(BOT_TOKEN, "40/../x", shared=True),
+        lambda: manager.client.share_config(BOT_TOKEN, 40, shared=True, share_with="chosen", friends=["x"]),
+    ):
+        with pytest.raises(ValueError):
+            await call()
+    assert len(manager.requests) == 1
