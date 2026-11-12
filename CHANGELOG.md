@@ -4,6 +4,8 @@ Versions follow `{major}.{minor}.{hotfix}[-prN]` — see `docs/ai/versioning.md`
 Sections per version: Added, Changed, Fixed, Removed, Security.
 
 ## [Unreleased]
+
+## [0.3.0] - 2026-11-12
 ### Added
 - `/friends` lists your friends and requests with buttons to accept, decline, take back or remove; `/friend add` asks a member or a manager user; a new alert sends a direct message with Accept and Decline for each new friend request. A manager without the friends feature gets a clear message. The bot's database gets a new migration (004, applied at startup).
 - `/generate` generates a game from your configs and follows it; `/game_archive` moves a game to the archive and back; `/game_delete` deletes one. All act as you, after a confirmation for archive and delete.
